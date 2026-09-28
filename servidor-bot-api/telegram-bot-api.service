@@ -1,0 +1,19 @@
+[Unit]
+Description=Servidor local do Telegram Bot API
+Documentation=https://github.com/tdlib/telegram-bot-api
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=marcos
+Group=marcos
+Environment=TELEGRAM_API_ID=SEU_API_ID
+Environment=TELEGRAM_API_HASH=SEU_API_HASH
+ExecStart=/usr/local/bin/telegram-bot-api --local --http-port=8081 --dir=/home/marcos/.telegram-bot-api
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

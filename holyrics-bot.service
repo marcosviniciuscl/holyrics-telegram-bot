@@ -1,0 +1,18 @@
+[Unit]
+Description=Bot Telegram x Holyrics
+Documentation=file://CAMINHO_INSTALACAO/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=USUARIO
+WorkingDirectory=CAMINHO_INSTALACAO
+ExecStart=CAMINHO_INSTALACAO/.venv/bin/python CAMINHO_INSTALACAO/bot.py --config CAMINHO_INSTALACAO/config.json
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

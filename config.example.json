@@ -1,0 +1,77 @@
+{
+  "telegram": {
+    "token": "COLE_AQUI_O_TOKEN_DO_BOTFATHER",
+    "usuarios_autorizados": [0],
+    "aceitar_grupos": false,
+
+    "api_id": 0,
+    "api_hash": "",
+    "base_url": "https://api.telegram.org/bot",
+    "base_file_url": "https://api.telegram.org/file/bot",
+    "local_mode": false
+  },
+
+  "pastas": {
+    "audio": "C:\\Holyrics\\files\\Audios",
+    "video": "C:\\Holyrics\\files\\Videos",
+    "imagem": "C:\\Holyrics\\files\\Imagens",
+    "apresentacao": "C:\\Holyrics\\files\\Apresentacoes",
+    "documento": "C:\\Holyrics\\files\\Documentos",
+    "outros": "C:\\Holyrics\\files\\Outros"
+  },
+
+  "pdf": {
+    "converter_para_pptx": true,
+    "dpi": 200,
+    "largura_max_px": 2400,
+    "qualidade_jpeg": 90,
+    "manter_pdf_original": false
+  },
+
+  "converter": {
+    "perguntar": true,
+    "audio_bitrate_kbps": 192
+  },
+
+  "youtube": {
+    "ativo": true,
+    "altura_maxima": 1080,
+    "duracao_maxima_min": 120,
+    "mp3_bitrate_kbps": 192,
+    "ffmpeg": "",
+    "cookies": ""
+  },
+
+  "download": {
+    "intervalo_progresso_segundos": 2,
+    "tamanho_maximo_mb": 20
+  },
+
+  "links": {
+    "ativo": true,
+    "tamanho_maximo_mb": 0,
+    "hosts_bloqueados": []
+  },
+
+  "minio": {
+    "ativo": false,
+    "endpoint": "",
+    "access_key": "",
+    "secret_key": "",
+    "bucket": "holyrics-entrada",
+    "secure": true,
+    "regiao": "us-east-1",
+    "url_pagina_upload": "",
+    "bucket_publico": "",
+    "prefixo": "entrada/",
+    "expira_min": 120,
+    "intervalo_verificacao_s": 10,
+    "espera_max_min": 120,
+    "tamanho_maximo_mb": 0
+  },
+
+  "log": {
+    "arquivo": "bot.log",
+    "nivel": "INFO"
+  }
+}
