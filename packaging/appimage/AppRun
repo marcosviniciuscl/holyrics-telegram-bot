@@ -1,0 +1,4 @@
+#!/bin/sh
+# Lançador do AppImage: abre o aplicativo empacotado ao lado.
+HERE="$(dirname "$(readlink -f "$0")")"
+exec "$HERE/HolyricsBot/HolyricsBot" "$@"

@@ -89,12 +89,30 @@ jobs:
         run: |
           . .venv/bin/activate
           pyinstaller --noconfirm --clean HolyricsBot.spec
-      - name: Empacotar
+      - name: Empacotar (.tar.gz e AppImage)
         run: |
+          set -e
           cp config.example.json dist/HolyricsBot/config.example.json
           tar -czf "HolyricsBot-Linux-${APP_VERSION}.tar.gz" -C dist HolyricsBot
+
+          rm -rf AppDir
+          mkdir -p AppDir
+          cp -a dist/HolyricsBot AppDir/HolyricsBot
+          cp packaging/appimage/AppRun AppDir/AppRun
+          chmod +x AppDir/AppRun
+          cp packaging/appimage/holyrics-bot.desktop AppDir/holyrics-bot.desktop
+          cp holyrics_bot/resources/icon.png AppDir/holyrics-bot.png
+
+          curl -L --fail --retry 3 -o appimagetool \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool
+          ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 \
+            ./appimagetool --no-appstream AppDir \
+            "HolyricsBot-Linux-${APP_VERSION}-x86_64.AppImage"
       - uses: actions/upload-artifact@v4
         with:
           name: HolyricsBot-Linux-${{ env.APP_VERSION }}
-          path: HolyricsBot-Linux-${{ env.APP_VERSION }}.tar.gz
+          path: |
+            HolyricsBot-Linux-${{ env.APP_VERSION }}.tar.gz
+            HolyricsBot-Linux-${{ env.APP_VERSION }}-x86_64.AppImage
           if-no-files-found: error

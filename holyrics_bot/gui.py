@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import copy
 import logging
+import os
 import queue
 import re
 import shlex
+import shutil
 import sys
 import threading
 from pathlib import Path
@@ -872,7 +874,17 @@ class Aplicativo:
             return
         try:
             congelado = bool(getattr(sys, "frozen", False))
-            if congelado:
+            appimage = os.environ.get("APPIMAGE")
+            if appimage:
+                exe = Path(appimage).resolve()
+                origem_icone = Path(getattr(sys, "_MEIPASS", exe.parent)) / \
+                    "holyrics_bot/resources/icon.png"
+                destino_icone = Path.home() / ".local/share/icons/holyrics-bot.png"
+                destino_icone.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(origem_icone, destino_icone)
+                icone = destino_icone
+                comando = shlex.quote(str(exe))
+            elif congelado:
                 exe = Path(sys.executable).resolve()
                 icone = Path(getattr(sys, "_MEIPASS", exe.parent)) / \
                     "holyrics_bot/resources/icon.png"

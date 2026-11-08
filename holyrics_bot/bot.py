@@ -63,6 +63,12 @@ def _dir_recursos() -> Path:
 def _dir_app() -> Path:
     """Onde ficam config.json e bot.log: ao lado do executável (ou do projeto)."""
     if getattr(sys, "frozen", False):
+        # AppImage é montado como somente leitura: usa a config do usuário.
+        if os.environ.get("APPIMAGE"):
+            base = Path(os.environ.get(
+                "XDG_CONFIG_HOME", str(Path.home() / ".config")
+            ))
+            return base / "holyrics-bot"
         return Path(sys.executable).resolve().parent
     return Path(__file__).resolve().parent.parent
 

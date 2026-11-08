@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Holyrics Bot
+Comment=Recebe arquivos do Telegram e salva no Holyrics
+Exec=HolyricsBot
+Icon=holyrics-bot
+Terminal=false
+Categories=Utility;Network;
+StartupWMClass=HolyricsBot
+X-AppImage-Version=0.0.1

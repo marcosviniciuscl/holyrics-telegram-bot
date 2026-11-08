@@ -12,10 +12,17 @@ pelo **Telegram** e salva nas pastas do **Holyrics**.
 1. No GitHub, abra **Actions → Build**.
    - Se não houver execução recente: **Run workflow**.
 2. Baixe o **Artifact**:
-   - **`HolyricsBot-Windows-0.0.1.zip`**
-   - **`HolyricsBot-Linux-0.0.1.tar.gz`**
+   - Windows: **`HolyricsBot-Windows-0.0.1.zip`**
+   - Linux: **`HolyricsBot-Linux-0.0.1-x86_64.AppImage`** (recomendado)
+     ou `HolyricsBot-Linux-0.0.1.tar.gz`
 3. **Windows:** descompacte e dê dois cliques em **`HolyricsBot.exe`**.
-   **Linux:** extraia e execute **`HolyricsBot`**.
+   **Linux:** dê permissão e execute o AppImage:
+   ```bash
+   chmod +x HolyricsBot-Linux-0.0.1-x86_64.AppImage
+   ./HolyricsBot-Linux-0.0.1-x86_64.AppImage
+   ```
+   Se a sua distro não tiver FUSE:
+   `./HolyricsBot-Linux-0.0.1-x86_64.AppImage --appimage-extract-and-run`
 4. O app abre na **bandeja**. Clique no ícone para configurar.
 
 No Linux, para criar o atalho no menu: abra a janela → aba **Avançado** →
@@ -138,14 +145,17 @@ HolyricsBot.spec         # configuração do PyInstaller
 pyproject.toml           # dependências e versão
 config.example.json      # exemplo de configuração
 tests/test_local.py      # testes locais
+packaging/appimage/      # AppRun + .desktop do AppImage
 .github/workflows/       # build automático dos pacotes
 bin/                     # ffmpeg/ffprobe (o CI coloca aqui; não versionado)
 ```
 
 ## Onde ficam os arquivos
 
-- Configuração: `config.json` **ao lado do executável**.
+- Configuração: `config.json` **ao lado do executável** (ou do `.tar.gz`).
 - Log: `bot.log` ao lado do executável.
+- **AppImage** é somente leitura, então configuração e log ficam em
+  **`~/.config/holyrics-bot/`**.
 - `config.json` guarda token e chaves — **não compartilhe**.
 
 ## Desenvolvimento (opcional)
@@ -179,6 +189,7 @@ sudo systemctl daemon-reload
 | Windows: “O Windows protegeu o computador” | **Mais informações → Executar assim mesmo** (o .exe não é assinado) |
 | Ícone não aparece na bandeja | clique na seta “^” ao lado do relógio |
 | Linux: bandeja não aparece | KDE/XFCE/Cinnamon/MATE, ou extensão AppIndicator no GNOME; o atalho/janela continua funcionando |
+| Linux: AppImage não abre | instale FUSE ou rode com `--appimage-extract-and-run` |
 | “Não autorizado” no Telegram | confira os IDs autorizados (use `/id`) |
 | Vídeo não abre no Holyrics | veja o log; se já era H.264/AAC+faststart, o problema pode ser o próprio arquivo |
 | YouTube pede verificação | exporte `cookies.txt` e aponte na aba YouTube |
