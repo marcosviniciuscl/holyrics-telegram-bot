@@ -155,8 +155,10 @@ class Config:
 
         # Conversão de mídia para os formatos que o Holyrics prefere (mp3/mp4).
         cv = bruto.get("converter") or {}
-        self.converter_perguntar: bool = bool(cv.get("perguntar", True))
+        self.converter_perguntar: bool = bool(cv.get("perguntar", False))
         self.converter_audio_kbps: int = int(cv.get("audio_bitrate_kbps", 192))
+        self.converter_crf: int = int(cv.get("video_crf", 18))
+        self.converter_preset: str = str(cv.get("video_preset", "medium"))
 
         dl = bruto.get("download") or {}
         self.progresso_intervalo: float = float(dl.get("intervalo_progresso_segundos", 2))
@@ -300,6 +302,17 @@ def caminho_ffmpeg(cfg: "Config") -> str | None:
 
 def ffmpeg_disponivel(cfg: "Config") -> bool:
     return caminho_ffmpeg(cfg) is not None
+
+
+def caminho_ffprobe(cfg: "Config") -> str | None:
+    """Procura o ffprobe ao lado do ffmpeg (pasta bin/ ou PATH)."""
+    ffmpeg = caminho_ffmpeg(cfg)
+    if ffmpeg:
+        nome = "ffprobe.exe" if os.name == "nt" else "ffprobe"
+        candidato = Path(ffmpeg).with_name(nome)
+        if candidato.exists():
+            return str(candidato)
+    return shutil.which("ffprobe")
 
 
 # ---------------------------------------------------------------------------
@@ -1211,35 +1224,276 @@ def salvar_para_pasta(origem: Path, nome: str, cfg: Config,
 # Conversão de mídia para os formatos que o Holyrics prefere (mp3 / mp4)
 # ---------------------------------------------------------------------------
 
-def alvo_conversao(nome: str, cfg: Config) -> str | None:
-    """Diz para qual formato perguntar a conversão (ou None se já está certo)."""
-    if not cfg.converter_perguntar or not ffmpeg_disponivel(cfg):
-        return None
-    sufixo = Path(nome).suffix.lower()
-    categoria = categoria_de(nome)
-    if categoria == "audio" and sufixo != ".mp3":
-        return "mp3"
-    if categoria == "video" and sufixo != ".mp4":
-        return "mp4"
+def _primeiro_stream(info: dict, tipo: str) -> dict | None:
+    for stream in info.get("streams") or []:
+        if stream.get("codec_type") == tipo:
+            return stream
     return None
 
 
-def converter_midia(origem: Path, destino: Path, alvo: str, cfg: Config) -> Path:
-    """Converte áudio para mp3 ou vídeo para mp4 usando o ffmpeg."""
+def sondar_midia(cfg: Config, caminho: Path) -> dict:
+    """Lê contêiner, codecs, pixel format e duração com o ffprobe."""
+    ffprobe = caminho_ffprobe(cfg)
+    if not ffprobe:
+        return {}
+    try:
+        resultado = subprocess.run(
+            [ffprobe, "-v", "error", "-print_format", "json",
+             "-show_format", "-show_streams", str(caminho)],
+            capture_output=True, text=True, timeout=120,
+        )
+        if resultado.returncode != 0:
+            return {}
+        return json.loads(resultado.stdout or "{}")
+    except Exception as e:  # noqa: BLE001
+        LOG.warning("ffprobe falhou em %s: %s", caminho, e)
+        return {}
+
+
+def mp4_tem_faststart(caminho: Path) -> bool:
+    """Verifica se o átomo 'moov' vem antes de 'mdat' (MP4 pronto p/ streaming)."""
+    try:
+        with open(caminho, "rb") as arquivo:
+            while True:
+                cabecalho = arquivo.read(8)
+                if len(cabecalho) < 8:
+                    return False
+                tamanho = int.from_bytes(cabecalho[:4], "big")
+                tipo = cabecalho[4:8]
+                if tipo == b"moov":
+                    return True
+                if tipo == b"mdat":
+                    return False
+                if tamanho == 1:
+                    extra = arquivo.read(8)
+                    if len(extra) < 8:
+                        return False
+                    tamanho = int.from_bytes(extra, "big")
+                    arquivo.seek(tamanho - 16, os.SEEK_CUR)
+                elif tamanho == 0:
+                    return False
+                else:
+                    arquivo.seek(tamanho - 8, os.SEEK_CUR)
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def analisar_conversao(cfg: Config, caminho: Path, nome: str) -> dict | None:
+    """Diz se o arquivo precisa ser normalizado para o Holyrics.
+
+    Retorna {"tipo", "alvo", "modo", "motivo", "duracao"} ou None se já está bom.
+    Modos de vídeo: reencode (H.264/yuv420p), audio_copy (só o áudio), remux.
+    """
+    categoria = categoria_de(nome)
+    sufixo = Path(nome).suffix.lower()
+
+    if categoria == "imagem":
+        if sufixo in {".jpg", ".jpeg", ".png", ".gif"}:
+            return None
+        return {"tipo": "imagem", "alvo": None, "modo": "imagem",
+                "motivo": f"formato {sufixo or 'desconhecido'}", "duracao": 0}
+
+    if categoria not in ("audio", "video"):
+        return None
+    if not ffmpeg_disponivel(cfg):
+        LOG.warning("ffmpeg ausente: não vou converter %s", nome)
+        return None
+
+    info = sondar_midia(cfg, caminho)
+
+    if categoria == "video":
+        video = _primeiro_stream(info, "video")
+        audio = _primeiro_stream(info, "audio")
+        if not video:
+            # Sem ffprobe/stream: cai no critério da extensão.
+            if sufixo != ".mp4":
+                return {"tipo": "video", "alvo": "mp4", "modo": "reencode",
+                        "motivo": f"extensão {sufixo or '?'}", "duracao": 0}
+            return None
+
+        vcodec = str(video.get("codec_name") or "").lower()
+        pix_fmt = str(video.get("pix_fmt") or "").lower()
+        acodec = str(audio.get("codec_name") or "").lower() if audio else None
+        formato = str((info.get("format") or {}).get("format_name") or "").lower()
+        duracao = float((info.get("format") or {}).get("duration") or 0)
+
+        video_ok = vcodec == "h264" and pix_fmt in ("yuv420p", "yuvj420p")
+        audio_ok = acodec in (None, "", "aac", "mp3")
+        eh_mp4 = "mp4" in formato.split(",")
+
+        if video_ok and audio_ok:
+            if not eh_mp4:
+                return {"tipo": "video", "alvo": "mp4", "modo": "remux",
+                        "motivo": f"contêiner {formato}", "duracao": duracao}
+            if not mp4_tem_faststart(caminho):
+                return {"tipo": "video", "alvo": "mp4", "modo": "remux",
+                        "motivo": "MP4 sem faststart", "duracao": duracao}
+            return None
+        if video_ok and eh_mp4 and not audio_ok:
+            return {"tipo": "video", "alvo": "mp4", "modo": "audio_copy",
+                    "motivo": f"áudio {acodec}", "duracao": duracao}
+        return {"tipo": "video", "alvo": "mp4", "modo": "reencode",
+                "motivo": f"vídeo {vcodec or '?'}/{pix_fmt or '?'}", "duracao": duracao}
+
+    # áudio
+    audio = _primeiro_stream(info, "audio")
+    acodec = str(audio.get("codec_name") or "").lower() if audio else ""
+    duracao = float((info.get("format") or {}).get("duration") or 0)
+    if sufixo == ".mp3" and acodec in ("", "mp3"):
+        return None
+    modo = "copy" if acodec == "mp3" else "reencode"
+    return {"tipo": "audio", "alvo": "mp3", "modo": modo,
+            "motivo": f"áudio {acodec or '?'}", "duracao": duracao}
+
+
+def converter_imagem(origem: Path, cfg: Config) -> Path:
+    """Converte imagens para JPG (ou PNG se tiver transparência)."""
+    from PIL import Image, ImageOps
+
+    Image.MAX_IMAGE_PIXELS = None
+    with Image.open(origem) as img:
+        img = ImageOps.exif_transpose(img)
+        tem_alfa = img.mode in ("RGBA", "LA") or (
+            img.mode == "P" and "transparency" in img.info
+        )
+        if tem_alfa:
+            destino = origem.with_suffix(".png")
+            img.convert("RGBA").save(destino, "PNG", optimize=True)
+        else:
+            destino = origem.with_suffix(".jpg")
+            img.convert("RGB").save(destino, "JPEG", quality=92, optimize=True, progressive=True)
+    return destino
+
+
+def converter_midia(origem: Path, destino: Path, cfg: Config, alvo: str, modo: str,
+                    estado: dict | None = None) -> Path:
+    """Normaliza vídeo (H.264/AAC/yuv420p/faststart) ou áudio (MP3).
+
+    Para vídeo usa CRF (qualidade alta), sem redimensionar — preserva resolução,
+    proporção e taxa de quadros.
+    """
     ffmpeg = caminho_ffmpeg(cfg)
     if not ffmpeg:
         raise RuntimeError("ffmpeg não encontrado para converter")
+    estado = estado if estado is not None else {}
+
+    base = [ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-nostats",
+            "-progress", "pipe:1", "-i", str(origem)]
+
     if alvo == "mp3":
-        comando = [ffmpeg, "-y", "-i", str(origem), "-vn",
-                   "-codec:a", "libmp3lame", "-b:a", f"{cfg.converter_audio_kbps}k", str(destino)]
-    else:
-        comando = [ffmpeg, "-y", "-i", str(origem), "-c:v", "libx264", "-preset", "veryfast",
-                   "-crf", "20", "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart",
-                   str(destino)]
-    resultado = subprocess.run(comando, capture_output=True, text=True)
-    if resultado.returncode != 0:
-        raise RuntimeError(f"ffmpeg falhou: {resultado.stderr.strip()[-300:]}")
+        if modo == "copy":
+            comando = base + ["-vn", "-c:a", "copy", "-f", "mp3", str(destino)]
+        else:
+            comando = base + ["-vn", "-c:a", "libmp3lame",
+                              "-b:a", f"{cfg.converter_audio_kbps}k", str(destino)]
+    elif modo == "remux":
+        comando = base + ["-map", "0:v:0", "-map", "0:a?", "-c", "copy",
+                          "-movflags", "+faststart", str(destino)]
+    elif modo == "audio_copy":
+        comando = base + ["-map", "0:v:0", "-map", "0:a?",
+                          "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+                          "-movflags", "+faststart", str(destino)]
+    else:  # reencode de vídeo
+        comando = base + [
+            "-map", "0:v:0", "-map", "0:a?",
+            "-c:v", "libx264", "-preset", cfg.converter_preset,
+            "-crf", str(cfg.converter_crf), "-pix_fmt", "yuv420p",
+            "-profile:v", "high",
+            "-c:a", "aac", "-b:a", "192k",
+            "-movflags", "+faststart", "-max_muxing_queue_size", "2048",
+            "-map_metadata", "0",
+            str(destino),
+        ]
+
+    with tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace") as erros:
+        processo = subprocess.Popen(comando, stdout=subprocess.PIPE, stderr=erros, text=True)
+        if processo.stdout is not None:
+            for linha in processo.stdout:
+                if "=" not in linha:
+                    continue
+                chave, valor = linha.strip().split("=", 1)
+                if chave in ("out_time_us", "out_time_ms"):
+                    try:
+                        estado["feito"] = int(valor) / 1_000_000.0
+                    except ValueError:
+                        pass
+            processo.stdout.close()
+        codigo = processo.wait()
+        if codigo != 0:
+            erros.seek(0)
+            detalhe = erros.read().strip()[-500:]
+            raise RuntimeError(f"ffmpeg falhou: {detalhe}")
     return destino
+
+
+async def rodar_conversao(mensagem, origem: Path, destino: Path, cfg: Config,
+                          alvo: str, modo: str, duracao: float) -> Path:
+    """Converte mostrando o andamento na mensagem do Telegram."""
+    estado = {"feito": 0.0}
+    rotulo = alvo.upper()
+    parar = asyncio.Event()
+
+    def texto() -> str:
+        if duracao:
+            pct = min(99, int(estado["feito"] * 100 / duracao))
+            return f"🔄 Convertendo para {rotulo}… {pct}%"
+        return f"🔄 Convertendo para {rotulo}…"
+
+    async def vigia():
+        ultimo = None
+        while not parar.is_set():
+            atual = texto()
+            if atual != ultimo:
+                ultimo = atual
+                await editar(mensagem, atual)
+            try:
+                await asyncio.wait_for(parar.wait(), 1.0)
+            except asyncio.TimeoutError:
+                pass
+        await editar(mensagem, texto())
+
+    tarefa = asyncio.create_task(vigia())
+    try:
+        await asyncio.to_thread(converter_midia, origem, destino, cfg, alvo, modo, estado)
+    finally:
+        parar.set()
+        await tarefa
+    return destino
+
+
+async def normalizar_arquivo(mensagem, origem: Path, nome: str, cfg: Config) -> tuple[Path, str, str]:
+    """Converte o arquivo se preciso. Retorna (caminho, nome, aviso p/ o chat)."""
+    analise = analisar_conversao(cfg, origem, nome)
+    if not analise:
+        return origem, nome, ""
+
+    if analise["tipo"] == "imagem":
+        await editar(mensagem, f"🖼 Convertendo imagem <b>{html.escape(nome)}</b>…")
+        destino = await asyncio.to_thread(converter_imagem, origem, cfg)
+        formato = destino.suffix.upper().lstrip(".")
+        return destino, destino.name, f"🖼 Convertida para {formato}"
+
+    alvo = analise["alvo"]
+    novo_nome = nome_seguro(Path(nome).with_suffix("." + alvo).name)
+    saida = origem.with_name(novo_nome)
+    LOG.info("Convertendo %s -> %s (%s: %s)", nome, alvo,
+             analise.get("modo"), analise.get("motivo"))
+    await rodar_conversao(mensagem, origem, saida, cfg, alvo,
+                          analise.get("modo") or "reencode",
+                          float(analise.get("duracao") or 0))
+    return saida, novo_nome, f"🔄 Convertido para {alvo.upper()}"
+
+
+async def normalizar_com_fallback(mensagem, origem: Path, nome: str,
+                                  cfg: Config) -> tuple[Path, str, str]:
+    """Normaliza; se a conversão falhar, salva o original (não perde o arquivo)."""
+    try:
+        return await normalizar_arquivo(mensagem, origem, nome, cfg)
+    except Exception as e:  # noqa: BLE001
+        LOG.exception("Falha ao converter %s; salvando original", nome)
+        return origem, nome, (
+            f"⚠️ Não consegui converter ({html.escape(str(e))}); salvei o original."
+        )
 
 
 async def oferecer_conversao(app: Application, chat_id: int, mensagem, origem: Path,
@@ -1328,7 +1582,7 @@ async def botao_converter(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             novo_nome = nome_seguro(Path(nome).with_suffix("." + alvo).name)
             saida = origem.with_name(novo_nome)
             await editar(mensagem, f"🔄 Convertendo <b>{html.escape(nome)}</b> para {alvo.upper()}…")
-            await asyncio.to_thread(converter_midia, origem, saida, alvo, cfg)
+            await asyncio.to_thread(converter_midia, origem, saida, cfg, alvo, "reencode", None)
             origem, nome = saida, novo_nome
         destino = await asyncio.to_thread(salvar_para_pasta, origem, nome, cfg)
         await editar(
@@ -1440,17 +1694,15 @@ async def esperar_upload(app: Application, token: str, chat_id: int) -> None:
         await baixar_do_minio(store, pendente["chave"], baixado, estado,
                               html.escape(nome), tamanho, cfg.progresso_intervalo)
         await asyncio.to_thread(store.apagar, pendente["chave"])
-        alvo = alvo_conversao(nome, cfg)
-        if alvo:
-            await oferecer_conversao(app, chat_id, estado, baixado, nome, alvo, pendente["user"])
-        else:
-            destino = await asyncio.to_thread(salvar_para_pasta, baixado, nome, cfg)
-            await estado.edit_text(
-                f"✅ <b>{html.escape(nome)}</b>\n"
-                f"📁 Salvo em:\n<code>{html.escape(str(destino))}</code>\n"
-                f"📦 {fmt_bytes(destino.stat().st_size)}",
-                parse_mode=ParseMode.HTML,
-            )
+        baixado, nome, aviso = await normalizar_com_fallback(estado, baixado, nome, cfg)
+        destino = await asyncio.to_thread(salvar_para_pasta, baixado, nome, cfg)
+        await estado.edit_text(
+            f"✅ <b>{html.escape(nome)}</b>\n"
+            f"📁 Salvo em:\n<code>{html.escape(str(destino))}</code>\n"
+            f"📦 {fmt_bytes(destino.stat().st_size)}"
+            + (f"\n{aviso}" if aviso else ""),
+            parse_mode=ParseMode.HTML,
+        )
     except Exception as e:  # noqa: BLE001
         LOG.exception("Falha ao salvar o arquivo vindo do MinIO")
         await estado.edit_text(
@@ -1513,19 +1765,17 @@ async def esperar_prefixo(app: Application, token: str, chat_id: int) -> None:
         await baixar_do_minio(store, chave, baixado, estado,
                               html.escape(nome), tamanho, cfg.progresso_intervalo)
         await asyncio.to_thread(store.apagar, chave)
-        alvo = alvo_conversao(nome, cfg)
-        if alvo:
-            await oferecer_conversao(app, chat_id, estado, baixado, nome, alvo, pendente["user"])
-        else:
-            destino = await asyncio.to_thread(
-                salvar_para_pasta, baixado, nome_seguro(nome), cfg, pendente.get("categoria")
-            )
-            await estado.edit_text(
-                f"✅ <b>{html.escape(nome)}</b>\n"
-                f"📁 Salvo em:\n<code>{html.escape(str(destino))}</code>\n"
-                f"📦 {fmt_bytes(destino.stat().st_size)}",
-                parse_mode=ParseMode.HTML,
-            )
+        baixado, nome, aviso = await normalizar_com_fallback(estado, baixado, nome, cfg)
+        destino = await asyncio.to_thread(
+            salvar_para_pasta, baixado, nome_seguro(nome), cfg, pendente.get("categoria")
+        )
+        await estado.edit_text(
+            f"✅ <b>{html.escape(nome)}</b>\n"
+            f"📁 Salvo em:\n<code>{html.escape(str(destino))}</code>\n"
+            f"📦 {fmt_bytes(destino.stat().st_size)}"
+            + (f"\n{aviso}" if aviso else ""),
+            parse_mode=ParseMode.HTML,
+        )
     except Exception as e:  # noqa: BLE001
         LOG.exception("Falha ao salvar o arquivo do /enviar")
         await estado.edit_text(
@@ -1683,12 +1933,16 @@ async def receber(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 url = f"{BASE_API}/file/bot{cfg.token}/{caminho_arquivo}"
             await baixar(url, baixado_path, progresso)
 
-        # 1.5) áudio fora de MP3 / vídeo fora de MP4 -> pergunta se quer converter
-        alvo = alvo_conversao(nome, cfg)
-        if alvo:
-            await oferecer_conversao(context.application, msg.chat_id, estado,
-                                     baixado_path, nome, alvo, update.effective_user.id)
-            return
+        # 1.5) normaliza áudio (MP3), vídeo (MP4 H.264/AAC) e imagem
+        if cfg.converter_perguntar:
+            analise = analisar_conversao(cfg, baixado_path, nome)
+            if analise and analise["tipo"] in ("video", "audio"):
+                await oferecer_conversao(context.application, msg.chat_id, estado,
+                                         baixado_path, nome, analise["alvo"],
+                                         update.effective_user.id)
+                return
+        baixado_path, nome, aviso_conversao = await normalizar_com_fallback(
+            estado, baixado_path, nome, cfg)
 
         # 2) decide a pasta de destino (PDF converte antes de escolher destino)
         if eh_pdf(nome) and cfg.pdf_converter:
@@ -1736,6 +1990,7 @@ async def receber(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 f"✅ <b>{html.escape(nome)}</b>\n"
                 f"📁 Salvo em:\n<code>{html.escape(str(destino))}</code>\n"
                 f"📦 {fmt_bytes(destino.stat().st_size)}"
+                + (f"\n{aviso_conversao}" if aviso_conversao else "")
             )
 
         LOG.info("Salvo: %s", destino)
@@ -1807,6 +2062,11 @@ def verificar(cfg: Config) -> None:
         print(f"MinIO: ativado em {cfg.minio_endpoint} (bucket '{cfg.minio_bucket}')")
     else:
         print("MinIO: desativado (arquivos acima do limite não terão link de upload)")
+    if cfg.converter_perguntar:
+        print("Conversão: pergunta antes de converter (MP3/MP4)")
+    else:
+        print(f"Conversão automática: vídeo MP4 H.264 (CRF {cfg.converter_crf}), "
+              f"áudio MP3 {cfg.converter_audio_kbps}k, imagens JPG/PNG")
     if cfg.pdf_converter:
         amostra = cfg.pastas.get("apresentacao")
         if amostra is not None:

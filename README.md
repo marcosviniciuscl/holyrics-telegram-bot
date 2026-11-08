@@ -39,29 +39,47 @@ arquivo) também funcionam: o nome recebe a data/hora automaticamente.
 Se já existir um arquivo com o mesmo nome, o bot cria `nome (2).ext` — nunca
 sobrescreve nada.
 
-### Conversão para os formatos do Holyrics (MP3 / MP4)
+### Conversão automática para os formatos do Holyrics
 
-O Holyrics se comporta melhor com **MP3** para áudio e **MP4** para vídeo. Por
-isso, se você enviar um arquivo nessas categorias com outro formato, o bot
-**pergunta** se quer converter, com dois botões:
+O Holyrics funciona melhor com **MP4 (H.264 + AAC)** para vídeo, **MP3** para
+áudio e **JPG/PNG** para imagem. O bot analisa o arquivo de verdade (com
+`ffprobe`) e converte **só quando precisa**, automaticamente, mostrando o
+andamento no Telegram:
 
 ```
-📥 musica.m4a (11,4 MB) recebido.
-O Holyrics funciona melhor com MP3 para áudio. Quer converter?
-   [ ✅ Converter para MP3 ]   [ Salvar como está ]
+🔄 Convertendo para MP4… 47%
+✅ video.mp4
+📁 Salvo em: ...
+📦 58,3 MB
+🔄 Convertido para MP4
 ```
 
-- **Converter** → usa o ffmpeg para gerar o MP3 (ou MP4) e salva na pasta certa.
-- **Salvar como está** → guarda o original.
-- Se você não responder em 1 hora, o bot salva o original para não perder nada.
-- PDF continua sendo convertido para PowerPoint automaticamente (sem perguntar).
+**Vídeo** — normalizado para MP4 com:
+- vídeo **H.264** (perfil high) e pixel format **yuv420p** (8 bits);
+- áudio **AAC**;
+- **faststart** (começa a tocar antes de baixar tudo).
+
+Se já é MP4 H.264/AAC com faststart, nada é feito. Se só o contêiner/áudio está
+fora do padrão, faz **remux/cópia** (rápido, sem perder qualidade). Se o codec de
+vídeo é incompatível (HEVC, VP9, MPEG-4, 10 bits…), **reencoda** com CRF (padrão
+18), **sem redimensionar** — resolução, proporção e taxa de quadros preservadas.
+
+**Áudio** — tudo vira **MP3** (192 kbps por padrão). Se já for MP3, fica como está.
+
+**Imagem** — JPG/PNG/GIF ficam como estão. WebP, TIFF, BMP, HEIC, AVIF e JFIF são
+convertidos para **JPG** (ou **PNG** se tiver transparência), mantendo a qualidade.
+
+Se a conversão falhar, o bot **salva o original** e avisa no chat (não perde o
+arquivo). PDF continua indo para PowerPoint automaticamente.
 
 Configuração:
 
 ```json
 "converter": {
-  "perguntar": true,        // false = nunca pergunta, salva como veio
-  "audio_bitrate_kbps": 192 // qualidade do MP3 gerado
+  "perguntar": false,        // true = pergunta antes de converter (com botões)
+  "audio_bitrate_kbps": 192, // qualidade do MP3
+  "video_crf": 18,           // 18 = alta qualidade (menor = melhor/maior)
+  "video_preset": "medium"   // veryfast/medium/slow: velocidade x compressão
 }
 ```
 

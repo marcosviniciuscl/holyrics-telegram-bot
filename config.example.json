@@ -29,8 +29,10 @@
   },
 
   "converter": {
-    "perguntar": true,
-    "audio_bitrate_kbps": 192
+    "perguntar": false,
+    "audio_bitrate_kbps": 192,
+    "video_crf": 18,
+    "video_preset": "medium"
   },
 
   "youtube": {
