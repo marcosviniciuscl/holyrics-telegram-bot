@@ -71,6 +71,10 @@ Abas:
 
 Botões: **Salvar e aplicar**, **Iniciar/Parar bot**, **Abrir pasta** e **Sair**.
 
+Os campos de **tamanho/qualidade** (resolução, bitrate, DPI, CRF, duração e
+limites) são **listas de valores padrão**; o valor escolhido é salvo como
+número no `config.json`.
+
 O app **recarrega o `config.json` ao abrir a janela** (útil quando você edita o
 arquivo por fora). Na aba **Avançado** também há **Recarregar do arquivo** e
 **Abrir config.json**, além do caminho exato do arquivo em uso.

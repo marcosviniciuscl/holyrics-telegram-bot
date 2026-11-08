@@ -64,6 +64,65 @@ def dir_assets() -> Path:
     return candidatos[0]
 
 
+# Valores padrão para os campos que eram números digitados.
+OPCOES = {
+    "youtube.altura_maxima": [
+        "360p", "480p", "720p", "1080p (padrão)", "1440p", "2160p (4K)",
+    ],
+    "youtube.duracao_maxima_min": [
+        "Sem limite (0)", "15 min", "30 min", "60 min (1 h)",
+        "120 min (2 h)", "240 min (4 h)", "480 min (8 h)",
+    ],
+    "youtube.mp3_bitrate_kbps": [
+        "64 kbps", "96 kbps", "128 kbps", "160 kbps",
+        "192 kbps (padrão)", "256 kbps", "320 kbps",
+    ],
+    "converter.audio_bitrate_kbps": [
+        "64 kbps", "96 kbps", "128 kbps", "160 kbps",
+        "192 kbps (padrão)", "256 kbps", "320 kbps",
+    ],
+    "converter.video_crf": [
+        "18 (alta qualidade)", "20 (ótima)", "23 (boa)", "26 (média)",
+        "28 (menor arquivo)", "30 (compacto)",
+    ],
+    "converter.video_preset": [
+        "ultrafast", "veryfast", "fast", "medium", "slow", "slower",
+    ],
+    "pdf.dpi": [
+        "100 DPI (rascunho)", "150 DPI", "200 DPI (padrão)",
+        "300 DPI (alta)", "400 DPI (muito alta)",
+    ],
+    "pdf.qualidade_jpeg": [
+        "70% (menor)", "80%", "85%", "90% (padrão)", "95%", "100% (máxima)",
+    ],
+    "minio.expira_min": [
+        "15 min", "30 min", "60 min", "120 min (2 h)", "240 min (4 h)",
+        "480 min (8 h)", "720 min (12 h)", "1440 min (24 h)",
+    ],
+    "minio.espera_max_min": [
+        "15 min", "30 min", "60 min", "120 min (2 h)", "240 min (4 h)",
+        "480 min (8 h)",
+    ],
+    "minio.tamanho_maximo_mb": [
+        "Sem limite (0)", "100 MB", "250 MB", "500 MB",
+        "1024 MB (1 GB)", "2048 MB (2 GB)", "5120 MB (5 GB)",
+    ],
+    "links.tamanho_maximo_mb": [
+        "Sem limite (0)", "100 MB", "250 MB", "500 MB",
+        "1024 MB (1 GB)", "2048 MB (2 GB)",
+    ],
+    "download.tamanho_maximo_mb": [
+        "10 MB", "15 MB", "20 MB (nuvem)", "50 MB", "100 MB",
+        "500 MB", "1000 MB (1 GB)", "2000 MB (2 GB)",
+    ],
+    "minio.regiao": [
+        "us-east-1", "us-east-2", "us-west-1", "us-west-2",
+        "eu-west-1", "eu-central-1", "ap-southeast-1", "sa-east-1",
+    ],
+    "log.nivel": ["DEBUG", "INFO", "WARNING", "ERROR"],
+}
+
+
 # ---------------------------------------------------------------------------
 # Formulário rolável
 # ---------------------------------------------------------------------------
@@ -149,23 +208,10 @@ class Formulario:
             self.linha += 1
         return entrada
 
-    def spin(self, rotulo, var, de, ate, passo=1, dica=None) -> ttk.Spinbox:
-        self._rotulo(rotulo)
-        caixa = ttk.Spinbox(self.frame, from_=de, to=ate, increment=passo,
-                            textvariable=var)
-        caixa.grid(row=self.linha, column=1, sticky="w", pady=5)
-        self.linha += 1
-        if dica:
-            ttk.Label(self.frame, text=dica, style="Muted.TLabel").grid(
-                row=self.linha, column=1, columnspan=3, sticky="w", pady=(0, 2)
-            )
-            self.linha += 1
-        return caixa
-
     def combo(self, rotulo, var, valores, dica=None) -> ttk.Combobox:
         self._rotulo(rotulo)
         caixa = ttk.Combobox(self.frame, textvariable=var, values=valores,
-                             state="readonly")
+                             state="readonly", width=30)
         caixa.grid(row=self.linha, column=1, sticky="w", pady=5)
         self.linha += 1
         if dica:
@@ -394,7 +440,10 @@ class Aplicativo:
             if caminho == "telegram.usuarios":
                 ids = self._get("telegram.usuarios_autorizados", []) or []
                 return tk.StringVar(value=", ".join(str(i) for i in ids))
-            return tk.StringVar(value=str(self._get(caminho, padrao)))
+            valor = self._get(caminho, padrao)
+            if caminho in OPCOES:
+                valor = self._rotulo_opcao(caminho, valor)
+            return tk.StringVar(value=str(valor))
         def bv(caminho, padrao=False):
             return tk.BooleanVar(value=bool(self._get(caminho, padrao)))
 
@@ -412,7 +461,7 @@ class Aplicativo:
             "minio.endpoint", "minio.access_key", "minio.secret_key",
             "minio.bucket", "minio.regiao", "minio.url_pagina_upload",
             "minio.bucket_publico", "minio.prefixo", "minio.expira_min",
-            "minio.espera_max_min", "minio.tamanho_maximo_mb",
+            "minio.espera_max_min", "minio.tamanho_maximo_mb", "log.nivel",
         ):
             self.v[caminho] = sv(caminho)
         for caminho in (
@@ -421,12 +470,21 @@ class Aplicativo:
             "links.ativo", "minio.ativo", "minio.secure",
         ):
             self.v[caminho] = bv(caminho)
-        self.v["log.nivel"] = tk.StringVar(value=str(self._get("log.nivel", "INFO")))
 
-    def _preencher_vars(self):
-        for caminho, var in self.v.items():
-            valor = self._get(caminho, "")
-            var.set(valor)
+    def _rotulo_opcao(self, caminho: str, valor) -> str:
+        """Converte o valor salvo (ex.: 1080) no rótulo do select (1080p)."""
+        opcoes = OPCOES.get(caminho) or []
+        texto = str(valor).strip()
+        if texto in opcoes:
+            return texto
+        achado = re.search(r"-?\d+", texto)
+        if achado:
+            numero = int(achado.group(0))
+            for opcao in opcoes:
+                encontrado = re.search(r"-?\d+", opcao)
+                if encontrado and int(encontrado.group(0)) == numero:
+                    return opcao
+        return texto
 
     def _get(self, caminho: str, padrao=""):
         atual = self.dados
@@ -473,29 +531,31 @@ class Aplicativo:
                "proporção. Áudio → MP3. Imagem → JPG/PNG. A conversão acontece "
                "só quando o arquivo não está no padrão.")
         f.check("Perguntar antes de converter", self.v["converter.perguntar"])
-        f.spin("MP3 — qualidade (kbps)", self.v["converter.audio_bitrate_kbps"],
-               64, 320, 32)
-        f.spin("Vídeo — CRF (menor = melhor)", self.v["converter.video_crf"],
-               0, 35, 1, dica="18 é alta qualidade. 23 é menor arquivo.")
+        f.combo("MP3 — qualidade", self.v["converter.audio_bitrate_kbps"],
+                OPCOES["converter.audio_bitrate_kbps"])
+        f.combo("Vídeo — qualidade (CRF)", self.v["converter.video_crf"],
+                OPCOES["converter.video_crf"],
+                dica="18 = alta qualidade; números maiores = arquivo menor.")
         f.combo("Vídeo — preset", self.v["converter.video_preset"],
-                ["ultrafast", "veryfast", "fast", "medium", "slow", "slower"])
+                OPCOES["converter.video_preset"])
         f.secao("PDF")
         f.check("Converter PDF para PowerPoint (.pptx)",
                 self.v["pdf.converter_para_pptx"])
-        f.spin("DPI da conversão", self.v["pdf.dpi"], 100, 400, 50)
-        f.spin("Qualidade JPEG", self.v["pdf.qualidade_jpeg"], 50, 100, 5)
+        f.combo("DPI da conversão", self.v["pdf.dpi"], OPCOES["pdf.dpi"])
+        f.combo("Qualidade JPEG", self.v["pdf.qualidade_jpeg"],
+                OPCOES["pdf.qualidade_jpeg"])
         f.check("Manter também o PDF original", self.v["pdf.manter_pdf_original"])
 
     def _montar_youtube(self, painel):
         f = Formulario(painel)
         f.secao("YouTube")
         f.check("Ativar download do YouTube", self.v["youtube.ativo"])
-        f.spin("Altura máxima de vídeo (p)", self.v["youtube.altura_maxima"],
-               144, 2160, 120)
-        f.spin("Duração máxima (min)", self.v["youtube.duracao_maxima_min"],
-               1, 1440, 10)
-        f.spin("Bitrate do MP3 (kbps)", self.v["youtube.mp3_bitrate_kbps"],
-               64, 320, 32)
+        f.combo("Altura máxima de vídeo", self.v["youtube.altura_maxima"],
+                OPCOES["youtube.altura_maxima"])
+        f.combo("Duração máxima", self.v["youtube.duracao_maxima_min"],
+                OPCOES["youtube.duracao_maxima_min"])
+        f.combo("Bitrate do MP3", self.v["youtube.mp3_bitrate_kbps"],
+                OPCOES["youtube.mp3_bitrate_kbps"])
         f.campo("Cookies (opcional)", self.v["youtube.cookies"],
                 botao=("Escolher…", self._escolher_cookies),
                 dica="Arquivo cookies.txt (formato Netscape) se o YouTube pedir verificação.")
@@ -517,27 +577,28 @@ class Aplicativo:
         f.campo("Página de upload", self.v["minio.url_pagina_upload"],
                 botao=("Publicar no MinIO", self._publicar_pagina))
         f.campo("Prefixo", self.v["minio.prefixo"])
-        f.campo("Região", self.v["minio.regiao"])
+        f.combo("Região", self.v["minio.regiao"], OPCOES["minio.regiao"])
         f.check("Usar HTTPS", self.v["minio.secure"])
-        f.spin("Link expira em (min)", self.v["minio.expira_min"], 1, 1440, 10)
-        f.spin("Aguardar envio (min)", self.v["minio.espera_max_min"], 1, 1440, 10)
-        f.spin("Tamanho máximo (MB, 0 = sem limite)",
-               self.v["minio.tamanho_maximo_mb"], 0, 10000, 100)
+        f.combo("Link expira em", self.v["minio.expira_min"],
+                OPCOES["minio.expira_min"])
+        f.combo("Aguardar envio", self.v["minio.espera_max_min"],
+                OPCOES["minio.espera_max_min"])
+        f.combo("Tamanho máximo", self.v["minio.tamanho_maximo_mb"],
+                OPCOES["minio.tamanho_maximo_mb"])
 
     def _montar_avancado(self, painel):
         f = Formulario(painel)
         f.secao("Links diretos")
         f.check("Baixar links de arquivos colados no chat",
                 self.v["links.ativo"])
-        f.spin("Tamanho máximo do link (MB, 0 = sem limite)",
-               self.v["links.tamanho_maximo_mb"], 0, 10000, 100)
+        f.combo("Tamanho máximo do link", self.v["links.tamanho_maximo_mb"],
+                OPCOES["links.tamanho_maximo_mb"])
         f.secao("Telegram")
-        f.spin("Tamanho máximo recebido (MB)", self.v["download.tamanho_maximo_mb"],
-               1, 2000, 10,
-               dica="Na API na nuvem o máximo é 20 MB. Com MinIO, o excedente vira link.")
+        f.combo("Tamanho máximo recebido", self.v["download.tamanho_maximo_mb"],
+                OPCOES["download.tamanho_maximo_mb"],
+                dica="Na API na nuvem o máximo é 20 MB. Com MinIO, o excedente vira link.")
         f.secao("Registro")
-        f.combo("Nível do log", self.v["log.nivel"],
-                ["DEBUG", "INFO", "WARNING", "ERROR"])
+        f.combo("Nível do log", self.v["log.nivel"], OPCOES["log.nivel"])
         f.nota(f"Configuração: {self.caminho_config}\n"
                f"Log: {bot.DIR_APP / 'bot.log'}")
         f.secao("Arquivo de configuração")
@@ -579,10 +640,11 @@ class Aplicativo:
             return self.v[caminho].get().strip()
 
         def inteiro(caminho, padrao=0):
-            try:
-                return int(float(texto(caminho).replace(",", ".")))
-            except Exception:  # noqa: BLE001
-                return padrao
+            # Os selects agora guardam rótulos como "1080p" ou "120 min (2 h)".
+            achado = re.search(r"-?\d+", texto(caminho))
+            if achado:
+                return int(achado.group(0))
+            return padrao
 
         definir("telegram.token", texto("telegram.token"))
         ids = re.split(r"[\s,;]+", texto("telegram.usuarios"))
@@ -657,6 +719,8 @@ class Aplicativo:
             if caminho == "telegram.usuarios":
                 ids = self._get("telegram.usuarios_autorizados", []) or []
                 var.set(", ".join(str(i) for i in ids))
+            elif caminho in OPCOES:
+                var.set(self._rotulo_opcao(caminho, self._get(caminho, "")))
             else:
                 var.set(self._get(caminho, ""))
         self._mtime_config = mtime
