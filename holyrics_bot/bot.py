@@ -38,7 +38,7 @@ from urllib.parse import unquote, urlparse
 
 import httpx
 from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
-from minio_holyrics import MinioStore
+from .minio_store import MinioStore
 from telegram.constants import ChatAction, ParseMode
 from telegram.error import RetryAfter
 from telegram.ext import (
@@ -54,17 +54,17 @@ LOG = logging.getLogger("holyrics-bot")
 
 
 def _dir_recursos() -> Path:
-    """Onde ficam os arquivos empacotados (bin/, assets/): _MEIPASS no .exe."""
+    """Raiz dos recursos: _MEIPASS no pacote; pasta do projeto no fonte."""
     if getattr(sys, "frozen", False):
         return Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent))
-    return Path(__file__).resolve().parent
+    return Path(__file__).resolve().parent.parent
 
 
 def _dir_app() -> Path:
-    """Onde ficam config.json e bot.log: ao lado do .exe (ou do bot.py)."""
+    """Onde ficam config.json e bot.log: ao lado do executável (ou do projeto)."""
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
-    return Path(__file__).resolve().parent
+    return Path(__file__).resolve().parent.parent
 
 
 RAIZ = _dir_recursos()

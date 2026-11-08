@@ -3,6 +3,9 @@
 
 Windows: dist\\HolyricsBot\\HolyricsBot.exe
 Linux:   dist/HolyricsBot/HolyricsBot
+
+O CI baixa o ffmpeg/ffprobe estático para bin/ antes do build; o pacote final
+não baixa nada ao abrir.
 """
 import os
 import sys
@@ -10,8 +13,7 @@ import sys
 from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_submodules
 
 datas = [
-    ("assets", "assets"),
-    ("minio-uploader", "minio-uploader"),
+    ("holyrics_bot/resources", "holyrics_bot/resources"),
 ]
 if os.path.isdir("bin"):
     datas.append(("bin", "bin"))
@@ -31,7 +33,7 @@ except Exception:
 
 if sys.platform.startswith("win"):
     hiddenimports = ["pystray._win32", "pystray._base", "PIL._tkinter_finder"]
-    icone = "assets/icon.ico"
+    icone = "holyrics_bot/resources/icon.ico"
 else:
     hiddenimports = ["pystray._xorg", "pystray._base", "PIL._tkinter_finder"]
     icone = None
@@ -42,8 +44,8 @@ except Exception:
     pass
 
 a = Analysis(
-    ["holyrics_bot_gui.py"],
-    pathex=[],
+    ["main.py"],
+    pathex=["."],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,

@@ -11,6 +11,7 @@ import copy
 import logging
 import queue
 import re
+import shlex
 import sys
 import threading
 from pathlib import Path
@@ -20,8 +21,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from PIL import Image, ImageDraw, ImageTk
 
-import app_core
-import bot
+from . import __version__, app_core, bot
 
 try:
     import pystray
@@ -50,10 +50,15 @@ FONTE = "Segoe UI"
 
 
 def dir_assets() -> Path:
-    for base in (bot.RAIZ / "assets", bot.DIR_APP / "assets"):
+    candidatos = (
+        bot.RAIZ / "holyrics_bot" / "resources",
+        bot.DIR_APP / "holyrics_bot" / "resources",
+        Path(__file__).resolve().parent / "resources",
+    )
+    for base in candidatos:
         if base.is_dir():
             return base
-    return bot.RAIZ / "assets"
+    return candidatos[0]
 
 
 # ---------------------------------------------------------------------------
@@ -172,6 +177,13 @@ class Formulario:
         caixa.grid(row=self.linha, column=1, columnspan=3, sticky="w", pady=5)
         self.linha += 1
         return caixa
+
+    def botao(self, texto, comando) -> ttk.Button:
+        botao = ttk.Button(self.frame, text=texto, style="Ghost.TButton",
+                           command=comando)
+        botao.grid(row=self.linha, column=1, sticky="w", pady=6)
+        self.linha += 1
+        return botao
 
     def nota(self, texto: str):
         ttk.Label(self.frame, text=texto, style="Muted.TLabel",
@@ -318,7 +330,7 @@ class Aplicativo:
         )
         ttk.Label(
             cabecalho,
-            text="Recebe arquivos do Telegram e salva nas pastas do Holyrics",
+            text=f"Recebe arquivos do Telegram e salva nas pastas do Holyrics · v{__version__}",
             style="Sub.TLabel",
         ).grid(row=1, column=0, sticky="w", pady=(2, 0))
 
@@ -495,7 +507,8 @@ class Aplicativo:
         f.campo("Secret key", self.v["minio.secret_key"], show="•")
         f.campo("Bucket de entrada", self.v["minio.bucket"])
         f.campo("Bucket público (link curto)", self.v["minio.bucket_publico"])
-        f.campo("Página de upload", self.v["minio.url_pagina_upload"])
+        f.campo("Página de upload", self.v["minio.url_pagina_upload"],
+                botao=("Publicar no MinIO", self._publicar_pagina))
         f.campo("Prefixo", self.v["minio.prefixo"])
         f.campo("Região", self.v["minio.regiao"])
         f.check("Usar HTTPS", self.v["minio.secure"])
@@ -520,6 +533,10 @@ class Aplicativo:
                 ["DEBUG", "INFO", "WARNING", "ERROR"])
         f.nota(f"Configuração: {self.caminho_config}\n"
                f"Log: {bot.DIR_APP / 'bot.log'}")
+        f.secao("Atalho")
+        f.nota("No Linux, cria o atalho no menu de aplicativos. "
+               "No Windows, use o atalho do próprio executável.")
+        f.botao("Criar atalho no menu", self._criar_atalho)
 
     # ------------------------------------------------------------------ rodapé
     def _criar_rodape(self):
@@ -786,6 +803,106 @@ class Aplicativo:
         if escolhido:
             self.v["youtube.cookies"].set(escolhido)
 
+    # ------------------------------------------------------------------ MinIO
+    def _log_ui(self, texto: str) -> None:
+        try:
+            self.txt_log.configure(state="normal")
+            self.txt_log.insert("end", texto + "\n")
+            self.txt_log.see("end")
+            self.txt_log.configure(state="disabled")
+        except tk.TclError:
+            pass
+
+    def _publicar_pagina(self):
+        dados = self._coletar()
+        minio = dados["minio"]
+        if not all(minio.get(campo) for campo in
+                   ("endpoint", "access_key", "secret_key")):
+            messagebox.showwarning(
+                "MinIO", "Preencha endpoint, access key e secret key antes de publicar."
+            )
+            return
+        # Salva já (sem exigir token/pastas) para não perder o que foi digitado.
+        app_core.salvar(self.caminho_config, dados)
+        self.dados = dados
+        self._log_ui("Publicando a página de upload no MinIO…")
+        threading.Thread(target=self._publicar_pagina_thread, args=(dados,),
+                         daemon=True).start()
+
+    def _publicar_pagina_thread(self, dados: dict):
+        try:
+            import types
+            m = dados["minio"]
+            cfg = types.SimpleNamespace(
+                minio_endpoint=m.get("endpoint", ""),
+                minio_access=m.get("access_key", ""),
+                minio_secret=m.get("secret_key", ""),
+                minio_bucket=m.get("bucket") or "holyrics-entrada",
+                minio_secure=bool(m.get("secure", True)),
+                minio_regiao=m.get("regiao") or "us-east-1",
+                minio_expira_min=int(m.get("expira_min") or 120),
+                minio_max_mb=int(m.get("tamanho_maximo_mb") or 0),
+            )
+            store = bot.MinioStore(cfg)
+            bucket = m.get("bucket_publico") or "holyrics-publico"
+            url = store.publicar_pagina(dir_assets() / "uploader.html", bucket)
+            self._post(lambda: self._pagina_publicada(url))
+        except Exception as e:  # noqa: BLE001
+            LOG.exception("Falha ao publicar a página no MinIO")
+            self._post(lambda: messagebox.showerror(
+                "MinIO", f"Falha ao publicar a página:\n{e}"
+            ))
+
+    def _pagina_publicada(self, url: str):
+        self.v["minio.url_pagina_upload"].set(url)
+        if not self.v["minio.bucket_publico"].get().strip():
+            self.v["minio.bucket_publico"].set("holyrics-publico")
+        dados = self._coletar()
+        app_core.salvar(self.caminho_config, dados)
+        self.dados = dados
+        self._log_ui(f"Página publicada: {url}")
+        messagebox.showinfo("MinIO", f"Página publicada com sucesso:\n{url}")
+
+    # ------------------------------------------------------------------ atalho
+    def _criar_atalho(self):
+        if not sys.platform.startswith("linux"):
+            messagebox.showinfo(
+                "Atalho", "No Windows, use o atalho do próprio executável."
+            )
+            return
+        try:
+            congelado = bool(getattr(sys, "frozen", False))
+            if congelado:
+                exe = Path(sys.executable).resolve()
+                icone = Path(getattr(sys, "_MEIPASS", exe.parent)) / \
+                    "holyrics_bot/resources/icon.png"
+                comando = shlex.quote(str(exe))
+            else:
+                exe = Path(sys.executable).resolve()
+                principal = Path(__file__).resolve().parent.parent / "main.py"
+                icone = Path(__file__).resolve().parent / "resources/icon.png"
+                comando = f"{shlex.quote(str(exe))} {shlex.quote(str(principal))}"
+            destino = Path.home() / ".local/share/applications/HolyricsBot.desktop"
+            destino.parent.mkdir(parents=True, exist_ok=True)
+            destino.write_text(
+                "[Desktop Entry]\n"
+                "Type=Application\n"
+                "Version=1.0\n"
+                "Name=Holyrics Bot\n"
+                "Comment=Recebe arquivos do Telegram e salva no Holyrics\n"
+                f"Exec={comando}\n"
+                f"Icon={icone}\n"
+                "Terminal=false\n"
+                "Categories=Utility;Network;\n"
+                "StartupWMClass=HolyricsBot\n",
+                encoding="utf-8",
+            )
+            destino.chmod(0o755)
+            self._log_ui(f"Atalho criado: {destino}")
+            messagebox.showinfo("Atalho", f"Atalho criado em:\n{destino}")
+        except Exception as e:  # noqa: BLE001
+            messagebox.showerror("Atalho", f"Falha ao criar o atalho:\n{e}")
+
     def _sair_ui(self):
         try:
             self._aplicar_status("parado", "Saindo…")
@@ -872,5 +989,4 @@ def main() -> None:
     app.executar()
 
 
-if __name__ == "__main__":
-    main()
+

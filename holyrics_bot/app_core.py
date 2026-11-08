@@ -19,7 +19,7 @@ from typing import Callable
 
 from telegram import Update
 
-import bot
+from . import bot
 
 LOG = logging.getLogger("holyrics-bot.app")
 

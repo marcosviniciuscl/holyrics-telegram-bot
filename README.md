@@ -1,137 +1,83 @@
 # Holyrics Bot
 
-Aplicativo para **Windows e Linux** que recebe arquivos pelo **Telegram** e
-salva nas pastas do **Holyrics**. Fica na **bandeja do sistema** com o status do
-bot e uma janela de configuração simples.
+**v0.0.1** · Aplicativo de bandeja para **Windows e Linux** que recebe arquivos
+pelo **Telegram** e salva nas pastas do **Holyrics**.
 
-> Não é serviço, não é tarefa agendada. Você abre com **dois cliques** e ele fica
-> na bandeja. Para sair: botão direito no ícone → **Sair**.
+> Sem instalação, sem serviço e sem build na sua máquina. Baixe o pacote pronto,
+> descompacte e clique. O pacote já leva **Python, dependências, Tk, ffmpeg e
+> ffprobe**.
+
+## Baixar e rodar (sem instalar nada)
+
+1. No GitHub, abra **Actions → Build**.
+   - Se não houver execução recente: **Run workflow**.
+2. Baixe o **Artifact**:
+   - **`HolyricsBot-Windows-0.0.1.zip`**
+   - **`HolyricsBot-Linux-0.0.1.tar.gz`**
+3. **Windows:** descompacte e dê dois cliques em **`HolyricsBot.exe`**.
+   **Linux:** extraia e execute **`HolyricsBot`**.
+4. O app abre na **bandeja**. Clique no ícone para configurar.
+
+No Linux, para criar o atalho no menu: abra a janela → aba **Avançado** →
+**Criar atalho no menu**.
+
+Os builds rodam automaticamente no GitHub Actions a cada push na `main` e
+também podem ser disparados manualmente. Ainda não há tags/releases: a versão
+atual é **0.0.1**.
 
 ## O que ele faz
 
 - **Salva por tipo** nas pastas configuradas: áudio, vídeo, imagem,
   apresentações, documentos e outros.
 - **Normaliza para o Holyrics**:
-  - vídeo → **MP4 H.264 + AAC**, pixel format 8 bits e *faststart*, mantendo
-    resolução, proporção e taxa de quadros;
+  - vídeo → **MP4 H.264 + AAC**, 8 bits e *faststart*, mantendo resolução,
+    proporção e taxa de quadros;
   - áudio → **MP3**;
-  - imagem → **JPG/PNG** (formatos como WebP, TIFF, BMP, HEIC, AVIF, JFIF são
-    convertidos, com transparência preservada em PNG).
-  - A conversão só acontece quando o arquivo **não está no padrão** — o bot
-    analisa o codec de verdade com `ffprobe`, não só a extensão.
+  - imagem → **JPG/PNG** (WebP, TIFF, BMP, HEIC, AVIF, JFIF são convertidos,
+    com transparência preservada em PNG);
+  - a conversão só acontece quando o arquivo **não está no padrão** — o bot
+    analisa o codec com `ffprobe`, não só a extensão.
 - **PDF → PowerPoint** (.pptx) automaticamente.
-- **YouTube**: manda o link, escolhe vídeo (MP4) ou áudio (MP3).
-- **Arquivos grandes**: acima de 20 MB (limite do Telegram na nuvem), usa o
+- **YouTube**: link → 2 opções de vídeo (MP4) e 2 de áudio (MP3), com progresso.
+- **Arquivos grandes**: acima de 20 MB (limite da API na nuvem), usa o
   **MinIO** e devolve um link curto temporário.
 - **Links diretos**: cola um link de arquivo e o bot baixa e salva.
-- **Feedback no Telegram** em todas as etapas: download, conversão (com
-  porcentagem), envio e pasta final.
+- **Feedback no Telegram** em todas as etapas: download, conversão (com %),
+  envio e pasta final.
 
-## Rodar no Windows
+## Janela de configuração
 
-### Executável (recomendado)
+Abas:
 
-O executável leva **tudo embutido**: Python, dependências, `ffmpeg`, `ffprobe`
-e `yt-dlp`. Depois de gerado, **não baixa nada** ao abrir.
-
-Gere uma vez, no Windows:
-
-```powershell
-# na pasta do projeto
-Set-ExecutionPolicy -Scope Process Bypass -Force
-.\build-windows.ps1
-```
-
-O script:
-- cria o `.venv` e instala as dependências (uma vez);
-- usa o `ffmpeg.exe`/`ffprobe.exe` que você já tem (na pasta `bin\` ou no `PATH`)
-  — **não baixa ffmpeg**;
-- gera **`dist\HolyricsBot\HolyricsBot.exe`**.
-
-Depois é só dar **dois cliques** em `HolyricsBot.exe`.
-
-## Rodar no Linux
-
-### Binário + atalho (recomendado)
-
-```bash
-sudo apt install python3-tk      # só para o build (Tkinter; o binário leva embutido)
-./build-linux.sh --instalar
-```
-
-O script:
-- instala as dependências no `.venv` (uma vez);
-- usa o `ffmpeg`/`ffprobe` que você já tem (`bin/` ou `PATH`) — **não baixa**;
-- gera **`dist/HolyricsBot/HolyricsBot`** (com Tcl/Tk, Python e libs embutidos);
-- cria **`dist/HolyricsBot/HolyricsBot.desktop`** com caminhos absolutos e, com
-  `--instalar`, copia o atalho para o menu de aplicativos.
-
-Dê **dois cliques** no `.desktop` (ou no executável). O app fica na bandeja.
-
-> **Bandeja no Linux:** precisa de um ambiente com *system tray* — KDE, XFCE,
-> Cinnamon e MATE funcionam. No GNOME, instale a extensão **AppIndicator**.
-> Se a bandeja não aparecer, o atalho continua abrindo a janela normalmente.
-
-Cada build roda no **próprio sistema**: o PyInstaller não gera `.exe` a partir
-do Linux, nem um binário Linux a partir do Windows.
-
-### Rodar sem gerar o binário
-
-Se o `.venv` já existe:
-
-```bash
-# Windows
-executar-windows.bat
-
-# Linux (precisa de python3-tk instalado)
-./executar-linux.sh
-```
-
-No Windows ele usa `pythonw.exe` (sem console); no Linux,
-`.venv/bin/python`/`python3`. O app vai para a bandeja.
-
-## Primeira configuração
-
-Na primeira vez, a janela de configuração abre. Preencha:
-
-1. **Telegram** → token do [@BotFather](https://t.me/BotFather) e seu ID
-   (fale com o [@userinfobot](https://t.me/userinfobot) ou use `/id` no bot).
-2. **Pastas** → clique em **Escolher…** em cada categoria e aponte para as
-   pastas do Holyrics (Windows: `C:\Holyrics\files\...`;
-   Linux: `/opt/Holyrics/Holyrics/files/media/...`).
-3. Clique em **Salvar e aplicar**.
-
-A janela fecha para a bandeja e o bot começa a receber arquivos.
-
-## Bandeja do sistema
-
-| Ação | O que faz |
-|---|---|
-| Clique / duplo clique no ícone | abre a configuração |
-| Botão direito → **Iniciar bot** | inicia o bot |
-| Botão direito → **Parar bot** | para o bot |
-| Botão direito → **Status** | mostra online/parado/erro |
-| Botão direito → **Sair** | fecha o app de verdade |
-| Fechar a janela (X) | apenas esconde; continua na bandeja |
-
-O ícone muda de cor conforme o status (verde = online, amarelo = conectando,
-cinza = parado, vermelho = erro).
-
-## Abas da configuração
-
-- **Telegram** — token, IDs autorizados e aceitar grupos.
+- **Telegram** — token do [@BotFather](https://t.me/BotFather), IDs autorizados
+  (use `/id` no bot) e aceitar grupos.
 - **Pastas** — uma pasta para cada categoria do Holyrics.
 - **Conversão** — perguntar antes de converter, qualidade do MP3, CRF/preset do
   vídeo e opções do PDF.
-- **YouTube** — ativar, resolução máxima, duração máxima, bitrate do MP3 e
-  cookies.
-- **MinIO** — endpoint, chaves, buckets, página de upload e tempos.
-- **Avançado** — links diretos, limite do Telegram e nível do log.
+- **YouTube** — ativar, resolução/duração máximas, bitrate do MP3 e cookies.
+- **MinIO** — endpoint, chaves, buckets, link de upload e tempos. O botão
+  **Publicar no MinIO** sobe a página de upload e configura o bucket público.
+- **Avançado** — links diretos, limite do Telegram, nível do log e criação do
+  atalho no Linux.
 - **Log** — o que o bot está fazendo, em tempo real.
 
-## Conversão de vídeo (o padrão do Holyrics)
+Botões: **Salvar e aplicar**, **Iniciar/Parar bot**, **Abrir pasta** e **Sair**.
 
-O Holyrics abre e reproduz de forma confiável com:
+## Bandeja
+
+| Ação | O que faz |
+|---|---|
+| Clique / duplo clique | abre a configuração |
+| Botão direito → **Iniciar bot** | inicia o bot |
+| Botão direito → **Parar bot** | para o bot |
+| Botão direito → **Status** | online/parado/erro |
+| Botão direito → **Sair** | fecha o app |
+| Fechar a janela (X) | esconde; continua na bandeja |
+
+O ícone muda de cor: verde (online), amarelo (conectando), cinza (parado),
+vermelho (erro).
+
+## Conversão de vídeo (o padrão do Holyrics)
 
 | Item | Padrão |
 |---|---|
@@ -139,14 +85,12 @@ O Holyrics abre e reproduz de forma confiável com:
 | Vídeo | H.264 (perfil high) |
 | Pixel format | yuv420p (8 bits) |
 | Áudio | AAC |
-| Extras | `faststart` (começa antes de baixar tudo) |
+| Extras | `faststart` |
 
-Se o arquivo já está nesse padrão, **nada é feito**. Se só o contêiner/áudio
-está fora, o bot faz **remux/cópia** (rápido, sem perda). Se o codec de vídeo é
-incompatível (HEVC, VP9, MPEG-4, 10 bits…), ele **reencoda** com `libx264` e
-CRF configurável (padrão **18**), **sem redimensionar**.
-
-Configuração:
+Se já está nesse padrão, **nada é feito**. Se só o contêiner/áudio está fora,
+faz **remux/cópia** (rápido, sem perda). Se o codec é incompatível (HEVC, VP9,
+MPEG-4, 10 bits…), **reencoda** com `libx264` e CRF configurável (padrão **18**),
+sem redimensionar.
 
 ```json
 "converter": {
@@ -158,8 +102,6 @@ Configuração:
 ```
 
 ## MinIO (arquivos grandes)
-
-Para arquivos acima do limite do Telegram:
 
 ```json
 "minio": {
@@ -174,50 +116,54 @@ Para arquivos acima do limite do Telegram:
 }
 ```
 
-- O bot manda um **link curto**; o usuário sobe pelo navegador direto ao MinIO.
-- O bot **baixa com progresso**, salva na pasta e **apaga** do MinIO.
-- A página `minio-uploader/index.html` vai num bucket público de leitura. O
-  script `minio-uploader/publicar.sh` publica com o `mc`.
+- Abra a aba **MinIO → Publicar no MinIO** para subir a página e liberar leitura
+  pública do bucket (feito pelo próprio app).
+- O bot manda um link curto; o usuário sobe pelo navegador; o bot baixa com
+  progresso, salva e apaga do MinIO.
+- O bucket de destino pode ficar **privado**.
 
-## YouTube
+## Estrutura do projeto
 
-Mande um link (`youtube.com`, `youtu.be`, Shorts…). O bot oferece **2 opções de
-vídeo (sempre MP4)** e **2 de áudio (sempre MP3)**, com progresso. O áudio é
-convertido pelo ffmpeg que já vem no app.
+```
+holyrics_bot/            # pacote do aplicativo
+  __init__.py            # versão (0.0.1)
+  __main__.py            # python -m holyrics_bot
+  bot.py                 # motor: Telegram, pastas, conversão, MinIO
+  gui.py                 # janela + bandeja (tkinter + pystray)
+  app_core.py            # config.json, execução em thread, instância única
+  minio_store.py         # MinIO (S3)
+  resources/             # ícones + página de upload
+main.py                  # ponto de entrada (usado pelo PyInstaller)
+HolyricsBot.spec         # configuração do PyInstaller
+pyproject.toml           # dependências e versão
+config.example.json      # exemplo de configuração
+tests/test_local.py      # testes locais
+.github/workflows/       # build automático dos pacotes
+bin/                     # ffmpeg/ffprobe (o CI coloca aqui; não versionado)
+```
 
 ## Onde ficam os arquivos
 
 - Configuração: `config.json` **ao lado do executável**.
 - Log: `bot.log` ao lado do executável.
-- `config.json` guarda token e chaves — **não compartilhe** esse arquivo.
+- `config.json` guarda token e chaves — **não compartilhe**.
 
-## Builds automáticos (GitHub Actions)
+## Desenvolvimento (opcional)
 
-O workflow [`.github/workflows/build.yml`](.github/workflows/build.yml) gera os
-dois pacotes prontos:
+```bash
+pip install -e .[build]
+python main.py            # abre a janela
+python -m holyrics_bot    # idem
+python tests/test_local.py
+```
 
-- **`HolyricsBot-Windows.zip`** — `HolyricsBot.exe` + tudo embutido;
-- **`HolyricsBot-Linux.tar.gz`** — binário + `criar-atalho.sh` + tudo embutido
-  (inclui um ffmpeg estático baixado no build e embutido no pacote).
-
-Como usar:
-
-- **Manual:** no GitHub, aba **Actions** → **Build e release** → **Run workflow**.
-  Os pacotes ficam nos **Artifacts** da execução.
-- **Por tag (release):**
-  ```bash
-  git tag v1.0.0
-  git push origin v1.0.0
-  ```
-  O workflow builda os dois e cria uma **Release** com os arquivos anexados.
-
-O CI baixa as dependências e o ffmpeg **uma vez, no build**. O pacote final não
-depende de download nenhum ao abrir.
+Para rodar no fonte, tenha `ffmpeg` no `PATH` ou em `bin/`. Os pacotes prontos
+já levam o ffmpeg.
 
 ## Removendo o serviço antigo (Linux)
 
-As versões anteriores rodavam como serviço systemd. Isso foi removido do
-projeto. Se ainda houver um serviço instalado na máquina Linux:
+As versões antigas rodavam como serviço systemd. Isso foi removido. Se ainda
+houver um serviço instalado:
 
 ```bash
 sudo systemctl disable --now holyrics-bot
@@ -225,48 +171,15 @@ sudo rm -f /etc/systemd/system/holyrics-bot.service
 sudo systemctl daemon-reload
 ```
 
-## Modo CLI (opcional, para desenvolvimento)
-
-O motor do bot continua disponível:
-
-```bash
-python bot.py --verificar     # confere a configuração
-python bot.py                 # roda em primeiro plano (sem interface)
-python testes/teste_local.py  # testa conversão, download, regras, YouTube
-```
-
-## Estrutura
-
-```
-holyrics_bot_gui.py   # janela + bandeja (tkinter + pystray)
-app_core.py           # config.json, execução em thread, instância única
-bot.py                # motor do bot (Telegram, pastas, conversão, MinIO)
-minio_holyrics.py     # MinIO (S3)
-build-windows.ps1     # gera o .exe (Windows) com tudo embutido
-build-linux.sh        # gera o binário + atalho .desktop (Linux)
-HolyricsBot.spec      # configuração do PyInstaller (Windows e Linux)
-executar-windows.bat  # abre pelo .venv (sem gerar .exe)
-executar-linux.sh     # abre pelo binário ou .venv (Linux)
-assets/               # ícones do app/bandeja
-minio-uploader/       # página de upload e script de publicação
-servidor-bot-api/     # opcional: servidor local do Bot API (sem limite de 20 MB)
-```
-
 ## Problemas comuns
 
 | Sintoma | O que fazer |
 |---|---|
-| App não abre | veja se o executável/binário existe; rode o build de novo |
-| Windows: “O Windows protegeu o computador” | clique em **Mais informações → Executar assim mesmo** (o .exe não é assinado) |
-| Linux: bandeja não aparece | use KDE/XFCE/Cinnamon/MATE ou instale a extensão AppIndicator no GNOME |
-| Ícone não aparece na bandeja | clique na seta “^” ao lado do relógio; o app pode estar atrás |
+| App não abre | confira se extraiu a pasta inteira (o `_internal` é obrigatório) |
+| Windows: “O Windows protegeu o computador” | **Mais informações → Executar assim mesmo** (o .exe não é assinado) |
+| Ícone não aparece na bandeja | clique na seta “^” ao lado do relógio |
+| Linux: bandeja não aparece | KDE/XFCE/Cinnamon/MATE, ou extensão AppIndicator no GNOME; o atalho/janela continua funcionando |
 | “Não autorizado” no Telegram | confira os IDs autorizados (use `/id`) |
-| Vídeo ainda não abre no Holyrics | veja o log; se o arquivo já era H.264/AAC+faststart, o problema pode ser o próprio arquivo |
+| Vídeo não abre no Holyrics | veja o log; se já era H.264/AAC+faststart, o problema pode ser o próprio arquivo |
 | YouTube pede verificação | exporte `cookies.txt` e aponte na aba YouTube |
-| MinIO não conecta | confira endpoint/chaves e se o bucket existe |
-
----
-
-Feito para **Windows 10/11 e Linux**. O binário/executável gerado é
-autossuficiente — nada de instalar Python, ffmpeg ou dependências na máquina de
-quem usa.
+| MinIO não conecta | confira endpoint/chaves e use **Publicar no MinIO** para criar/configurar o bucket |

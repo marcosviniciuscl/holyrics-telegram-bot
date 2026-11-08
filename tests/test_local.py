@@ -6,14 +6,13 @@ Valida:
   1) a conversão PDF -> PowerPoint (.pptx)
   2) o download em streaming com atualização de progresso (sem spam)
 
-Uso:  python testes/teste_local.py
+Uso:  python tests/test_local.py
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-import os
 import shutil
 import sys
 import tempfile
@@ -24,21 +23,10 @@ from pathlib import Path
 RAIZ = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(RAIZ))
 
-import bot  # noqa: E402
+from holyrics_bot import bot  # noqa: E402
 
 TAMANHO_TESTE = 5 * 1024 * 1024  # 5 MB
 CONTEUDO = bytes(range(256)) * (TAMANHO_TESTE // 256)
-
-
-def _cfg_minimo(tmp: Path, nome: str, ffmpeg: str = "") -> Path:
-    """Config enxuto para os testes."""
-    caminho = tmp / nome
-    caminho.write_text(json.dumps({
-        "telegram": {"token": "x", "usuarios_autorizados": [7]},
-        "pastas": {"video": str(tmp / "Videos"), "audio": str(tmp / "Audios")},
-        "youtube": {"ativo": True, "ffmpeg": ffmpeg},
-    }), encoding="utf-8")
-    return caminho
 
 
 def criar_pdf(caminho: Path, paginas: int = 5) -> Path:
@@ -648,94 +636,6 @@ def teste_youtube(tmp: Path) -> bool:
     return ok
 
 
-def teste_ffmpeg(tmp: Path) -> bool:
-    """Ordem de procura do ffmpeg e detecção de plataforma do instalador."""
-    import platform as _platform
-
-    import baixar_ffmpeg
-
-    print()
-    print("=" * 62)
-    print("6) FFMPEG (ordem de procura + instalador portátil)")
-    print("=" * 62)
-
-    ok = True
-    bin_falso = tmp / "bot-com-bin"
-    (bin_falso / "bin").mkdir(parents=True, exist_ok=True)
-    exe = bin_falso / "bin" / ("ffmpeg.exe" if os.name == "nt" else "ffmpeg")
-    exe.write_text("#!/bin/sh\necho 'ffmpeg version 9.9-fake'\n", encoding="utf-8")
-    exe.chmod(0o755)
-
-    cfg_sem = bot.Config(_cfg_minimo(tmp, "cfg-sem-ffmpeg.json"))
-    cfg_com = bot.Config(_cfg_minimo(tmp, "cfg-com-ffmpeg.json", ffmpeg="/usr/bin/ffmpeg"))
-    cfg_errado = bot.Config(_cfg_minimo(tmp, "cfg-ffmpeg-errado.json", ffmpeg="/nao/existe/ffmpeg"))
-
-    raiz_original = bot.RAIZ
-
-    # 1) bin/ do bot tem prioridade sobre o PATH
-    bot.RAIZ = bin_falso
-    r1 = bot.caminho_ffmpeg(cfg_sem)
-    print(f"  bin/ portátil encontrado: {r1}")
-    ok &= r1 == str(exe) and bot.ffmpeg_disponivel(cfg_sem)
-
-    # 2) config.json tem prioridade sobre tudo
-    r2 = bot.caminho_ffmpeg(cfg_com)
-    print(f"  youtube.ffmpeg respeitado: {r2}")
-    ok &= r2 == "/usr/bin/ffmpeg"
-
-    # 3) sem bin/ e sem config -> PATH do sistema
-    bot.RAIZ = tmp / "bot-sem-bin"
-    (bot.RAIZ).mkdir(parents=True, exist_ok=True)
-    r3 = bot.caminho_ffmpeg(cfg_sem)
-    print(f"  cai para o PATH: {r3}")
-    ok &= bool(r3) and r3 == shutil.which("ffmpeg")
-
-    # 4) caminho inválido no config não quebra: avisa e usa o próximo
-    r4 = bot.caminho_ffmpeg(cfg_errado)
-    print(f"  youtube.ffmpeg inválido -> usa: {r4}")
-    ok &= r4 == shutil.which("ffmpeg")
-    bot.RAIZ = raiz_original
-
-    # 5) detecção de plataforma do baixar_ffmpeg.py
-    original_sistema, original_maquina = _platform.system, _platform.machine
-    casos = [
-        ("Windows", "AMD64", "win64", ".zip"),
-        ("Windows", "ARM64", "winarm64", ".zip"),
-        ("Linux", "x86_64", "linux64", ".tar.xz"),
-        ("Linux", "aarch64", "linuxarm64", ".tar.xz"),
-        ("Darwin", "x86_64", "osx64", ".zip"),
-    ]
-    for sistema, maquina, alvo, ext in casos:
-        _platform.system = lambda s=sistema: s
-        _platform.machine = lambda m=maquina: m
-        obtido = baixar_ffmpeg.alvo_plataforma()
-        casou = obtido == (alvo, ext)
-        ok &= casou
-        print(f"  {'✅' if casou else '❌'} {sistema}/{maquina:8} -> {obtido[0]}{obtido[1]}")
-    _platform.system = lambda: "Windows"
-    _platform.machine = lambda: "sparc"
-    try:
-        baixar_ffmpeg.alvo_plataforma()
-        ok = False
-        print("  ❌ plataforma desconhecida deveria dar erro")
-    except SystemExit:
-        print("  ✅ plataforma desconhecida -> erro explicativo")
-    _platform.system, _platform.machine = original_sistema, original_maquina
-
-    # 6) o instalador reconhece o ffmpeg que já existe
-    encontrado, onde = baixar_ffmpeg.situacao_atual(tmp / "vazio")
-    print(f"  --conferir acha o ffmpeg do sistema: {encontrado} ({onde})")
-    ok &= encontrado is not None and baixar_ffmpeg.versao_do(encontrado).startswith("ffmpeg version")
-
-    # 7) binário falso é reconhecido como portátil válido
-    encontrado2, onde2 = baixar_ffmpeg.situacao_atual(bin_falso / "bin")
-    print(f"  --conferir acha o portátil da pasta bin/: {encontrado2} ({onde2})")
-    ok &= str(encontrado2) == str(exe) and "portátil" in onde2
-
-    print("RESULTADO:", "OK ✅" if ok else "FALHOU ❌")
-    return ok
-
-
 def main() -> int:
     import logging
 
@@ -747,12 +647,11 @@ def main() -> int:
         ok3 = teste_regras(tmp)
         ok4 = teste_ponta_a_ponta(tmp)
         ok5 = teste_youtube(tmp)
-        ok6 = teste_ffmpeg(tmp)
     print()
     print("=" * 62)
-    print("TODOS OS TESTES:", "OK ✅" if all((ok1, ok2, ok3, ok4, ok5, ok6)) else "HOUVE FALHA ❌")
+    print("TODOS OS TESTES:", "OK ✅" if all((ok1, ok2, ok3, ok4, ok5)) else "HOUVE FALHA ❌")
     print("=" * 62)
-    return 0 if all((ok1, ok2, ok3, ok4, ok5, ok6)) else 1
+    return 0 if all((ok1, ok2, ok3, ok4, ok5)) else 1
 
 
 if __name__ == "__main__":

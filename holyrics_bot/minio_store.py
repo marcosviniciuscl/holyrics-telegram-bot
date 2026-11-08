@@ -45,18 +45,50 @@ class MinioStore:
         )
 
     # ------------------------------------------------------------------ bucket
-    def garantir_bucket(self) -> None:
+    def garantir_bucket(self, bucket: str | None = None) -> None:
         from botocore.exceptions import ClientError
 
+        bucket = bucket or self.bucket
         try:
-            self.cliente.head_bucket(Bucket=self.bucket)
+            self.cliente.head_bucket(Bucket=bucket)
         except ClientError as e:
             codigo = str(e.response.get("Error", {}).get("Code", ""))
             if codigo in ("404", "NoSuchBucket", "NotFound"):
-                self.cliente.create_bucket(Bucket=self.bucket)
-                LOG.info("Bucket '%s' criado no MinIO.", self.bucket)
+                self.cliente.create_bucket(Bucket=bucket)
+                LOG.info("Bucket '%s' criado no MinIO.", bucket)
             else:
                 raise
+
+    def aplicar_politica_publica(self, bucket: str | None = None) -> None:
+        """Permite apenas leitura pública dos objetos do bucket."""
+        bucket = bucket or self.bucket
+        politica = {
+            "Version": "2012-10-17",
+            "Statement": [{
+                "Effect": "Allow",
+                "Principal": {"AWS": ["*"]},
+                "Action": ["s3:GetObject"],
+                "Resource": [f"arn:aws:s3:::{bucket}/*"],
+            }],
+        }
+        self.cliente.put_bucket_policy(Bucket=bucket, Policy=json.dumps(politica))
+
+    def enviar_arquivo(self, caminho: Path, chave: str, bucket: str | None = None,
+                       content_type: str | None = None) -> None:
+        bucket = bucket or self.bucket
+        tipo = content_type or mimetypes.guess_type(str(caminho))[0] \
+            or "application/octet-stream"
+        self.cliente.upload_file(
+            str(caminho), bucket, chave, ExtraArgs={"ContentType": tipo}
+        )
+
+    def publicar_pagina(self, pagina: Path, bucket: str) -> str:
+        """Sobe a página de upload, libera leitura pública e devolve a URL."""
+        self.garantir_bucket(bucket)
+        self.aplicar_politica_publica(bucket)
+        self.enviar_arquivo(pagina, "uploader.html", bucket,
+                            "text/html; charset=utf-8")
+        return f"{self.endpoint}/{bucket}/uploader.html"
 
     # ------------------------------------------------------- link de upload
     def dados_upload(self, chave: str, redirect: str | None = None) -> dict:

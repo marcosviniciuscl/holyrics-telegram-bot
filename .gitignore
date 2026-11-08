@@ -55,3 +55,7 @@ dist/
 build/
 .venv-win/
 *.tmp
+
+# Python packaging
+*.egg-info/
+.pytest_cache/
