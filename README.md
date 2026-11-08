@@ -177,9 +177,28 @@ arquivo salvo. Se você reenviar o mesmo arquivo:
 ```json
 "cache": {
   "reutilizar": true,
+  "perguntar": true,
   "dias": 30
 }
 ```
+
+Com `perguntar: true`, ao detectar um arquivo já enviado o bot mostra:
+
+```
+♻️ arquivo.mp4 já foi enviado antes e está salvo:
+/caminho/arquivo.mp4
+🔑 Hash: 3f9c2a1b...
+O que você quer fazer?
+[ ♻️ Usar o salvo ]  [ 📥 Reenviar (baixar de novo) ]
+```
+
+- **Usar o salvo** → não baixa; se for o original de uma conversão que falhou,
+  converte esse original.
+- **Reenviar** → baixa de novo e processa outra vez.
+- O bot salva o **`file_unique_id`** (identificador estável do Telegram) para
+  detectar sem baixar e também o **SHA-256** do arquivo enviado.
+- Após uma conversão bem-sucedida, o **arquivo original é removido**; fica só o
+  convertido.
 
 O cache fica em `cache_arquivos.json` junto do `config.json`.
 

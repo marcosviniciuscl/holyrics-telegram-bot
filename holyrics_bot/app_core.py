@@ -72,6 +72,7 @@ DEFAULTS: dict = {
     },
     "cache": {
         "reutilizar": True,
+        "perguntar": True,
         "dias": 30,
     },
     "download": {

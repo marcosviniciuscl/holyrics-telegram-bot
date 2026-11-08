@@ -475,6 +475,7 @@ class Aplicativo:
             "telegram.aceitar_grupos", "youtube.ativo", "converter.perguntar",
             "pdf.converter_para_pptx", "pdf.manter_pdf_original",
             "links.ativo", "minio.ativo", "minio.secure", "cache.reutilizar",
+            "cache.perguntar",
         ):
             self.v[caminho] = bv(caminho)
 
@@ -607,6 +608,8 @@ class Aplicativo:
         f.secao("Cache de arquivos")
         f.check("Reutilizar arquivos já enviados (evita baixar de novo)",
                 self.v["cache.reutilizar"])
+        f.check("Perguntar se o arquivo já foi enviado (usar o salvo ou reenviar)",
+                self.v["cache.perguntar"])
         f.combo("Guardar cache por", self.v["cache.dias"], OPCOES["cache.dias"],
                 dica="Se o arquivo já está salvo, o bot usa ele em vez de baixar de novo.")
         f.secao("Registro")
@@ -689,6 +692,7 @@ class Aplicativo:
         definir("download.tamanho_maximo_mb",
                 inteiro("download.tamanho_maximo_mb", 20))
         definir("cache.reutilizar", self.v["cache.reutilizar"].get())
+        definir("cache.perguntar", self.v["cache.perguntar"].get())
         definir("cache.dias", inteiro("cache.dias", 30))
         definir("links.ativo", self.v["links.ativo"].get())
         definir("links.tamanho_maximo_mb", inteiro("links.tamanho_maximo_mb", 0))

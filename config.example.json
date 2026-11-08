@@ -37,6 +37,7 @@
 
   "cache": {
     "reutilizar": true,
+    "perguntar": true,
     "dias": 30
   },
 

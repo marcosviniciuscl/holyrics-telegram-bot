@@ -199,6 +199,7 @@ class Config:
 
         cache = bruto.get("cache") or {}
         self.cache_reutilizar: bool = bool(cache.get("reutilizar", True))
+        self.cache_perguntar: bool = bool(cache.get("perguntar", True))
         self.cache_dias: int = int(cache.get("dias", 30))
 
         dl = bruto.get("download") or {}
@@ -2012,6 +2013,11 @@ async def reutilizar_arquivo(update: Update, context: ContextTypes.DEFAULT_TYPE,
         return
 
     if entrada.get("tipo") == "final":
+        if cache is not None:
+            cache.registrar(
+                unique_id, origem, nome, tamanho, "final",
+                sha256=entrada.get("sha256"),
+            )
         texto = (
             f"✅ <b>{html.escape(Path(origem).name)}</b> já estava salvo:\n"
             f"<code>{html.escape(str(origem))}</code>"
@@ -2039,7 +2045,10 @@ async def reutilizar_arquivo(update: Update, context: ContextTypes.DEFAULT_TYPE,
                 except OSError:
                     pass
             if cache is not None:
-                cache.registrar(unique_id, destino, nome, tamanho, "final")
+                cache.registrar(
+                    unique_id, destino, nome, tamanho, "final",
+                    sha256=entrada.get("sha256"),
+                )
             await editar(
                 estado,
                 f"✅ <b>{html.escape(nome)}</b>\n"
@@ -2080,7 +2089,10 @@ async def reutilizar_arquivo(update: Update, context: ContextTypes.DEFAULT_TYPE,
                     except OSError:
                         pass
             if cache is not None:
-                cache.registrar(unique_id, destino, nome, tamanho, "final")
+                cache.registrar(
+                    unique_id, destino, nome, tamanho, "final",
+                    sha256=entrada.get("sha256"),
+                )
             await editar(
                 estado,
                 f"✅ <b>{html.escape(novo_nome)}</b>\n"
@@ -2097,6 +2109,107 @@ async def reutilizar_arquivo(update: Update, context: ContextTypes.DEFAULT_TYPE,
             f"❌ Falha ao reaproveitar <b>{html.escape(nome)}</b>:\n"
             f"{html.escape(str(e))}",
         )
+
+
+def buscar_existente(cfg: Config, nome: str, tamanho: int) -> dict | None:
+    """Procura um arquivo já salvo com o mesmo nome/tamanho (ou já convertido)."""
+    categoria = categoria_de(nome)
+    pastas: list[Path] = []
+    if eh_pdf(nome):
+        pastas = [cfg.pastas.get("apresentacao"), cfg.pastas.get("outros")]
+    else:
+        pastas = [cfg.pastas.get(categoria), cfg.pastas.get("outros")]
+    pastas = [p for p in pastas if p is not None]
+
+    vistos: set[Path] = set()
+    for pasta in pastas:
+        if pasta in vistos:
+            continue
+        vistos.add(pasta)
+        stem = Path(nome).stem
+        sufixo = Path(nome).suffix
+        # 1) o próprio original (mesmo nome e tamanho)
+        candidatos = [pasta / nome]
+        try:
+            candidatos += list(pasta.glob(f"{stem}*{sufixo}"))
+        except OSError:
+            pass
+        for candidato in candidatos:
+            try:
+                if not candidato.is_file():
+                    continue
+                if tamanho and candidato.stat().st_size != tamanho:
+                    continue
+            except OSError:
+                continue
+            if eh_pdf(nome) and cfg.pdf_converter and candidato.suffix.lower() == ".pdf":
+                tipo = "original"
+            elif analisar_conversao(cfg, candidato, nome):
+                tipo = "original"
+            else:
+                tipo = "final"
+            return {
+                "caminho": str(candidato),
+                "nome": candidato.name,
+                "tamanho": tamanho,
+                "tipo": tipo,
+                "sha256": CacheArquivos.hash_arquivo(candidato),
+            }
+
+        # 2) o arquivo já convertido (nome sem o tamanho original)
+        alvos: list[Path] = []
+        if eh_pdf(nome) and cfg.pdf_converter:
+            alvos = [pasta / f"{stem}.pptx"]
+        elif categoria == "audio":
+            alvos = [pasta / f"{stem}.mp3"]
+        elif categoria == "video":
+            alvos = [pasta / f"{stem}.mp4"]
+        elif categoria == "imagem":
+            alvos = [pasta / f"{stem}.jpg", pasta / f"{stem}.png"]
+        for alvo in alvos:
+            if alvo.is_file():
+                return {
+                    "caminho": str(alvo),
+                    "nome": alvo.name,
+                    "tamanho": tamanho,
+                    "tipo": "final",
+                    "sha256": CacheArquivos.hash_arquivo(alvo),
+                }
+    return None
+
+
+async def perguntar_reenvio(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                            msg, entrada: dict, nome: str, tamanho: int,
+                            unique_id: str) -> None:
+    """Pergunta se o usuário quer usar o arquivo salvo ou baixar de novo."""
+    token = secrets.token_hex(4)
+    pendentes = context.bot_data.setdefault("cache_pendentes", {})
+    if len(pendentes) > 100:
+        pendentes.clear()
+    pendentes[token] = {
+        "msg": msg,
+        "entrada": entrada,
+        "nome": nome,
+        "tamanho": tamanho,
+        "uid": unique_id,
+        "user": update.effective_user.id,
+        "chat": msg.chat_id,
+    }
+    caminho = str(entrada.get("caminho") or "")
+    resumo_hash = (entrada.get("sha256") or "")[:16]
+    texto = (
+        f"♻️ <b>{html.escape(nome)}</b> já foi enviado antes e está salvo:\n"
+        f"<code>{html.escape(caminho)}</code>\n"
+        + (f"🔑 Hash: <code>{resumo_hash}…</code>\n" if resumo_hash else "")
+        + "\nO que você quer fazer?"
+    )
+    teclado = InlineKeyboardMarkup([[
+        InlineKeyboardButton("♻️ Usar o salvo", callback_data=f"cache|{token}|u"),
+        InlineKeyboardButton("📥 Reenviar (baixar de novo)",
+                             callback_data=f"cache|{token}|r"),
+    ]])
+    feedback(texto)
+    await msg.reply_text(texto, parse_mode=ParseMode.HTML, reply_markup=teclado)
 
 
 async def receber(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -2138,12 +2251,22 @@ async def receber(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     LOG.info("Recebido: %s (%s) de %s", nome, fmt_bytes(tamanho), update.effective_user.id)
 
     cache = context.bot_data.get("cache")
-    if cfg.cache_reutilizar and cache is not None and unique_id:
-        entrada = cache.buscar(unique_id)
+    ignorar_cache = context.bot_data.pop("cache_ignore_once", None)
+    if ignorar_cache != unique_id and cfg.cache_reutilizar:
+        entrada = None
+        if cache is not None and unique_id:
+            entrada = cache.buscar(unique_id)
+        if entrada is None:
+            entrada = buscar_existente(cfg, nome, tamanho)
         if entrada:
-            await reutilizar_arquivo(
-                update, context, msg, entrada, nome, tamanho, unique_id
-            )
+            if cfg.cache_perguntar:
+                await perguntar_reenvio(
+                    update, context, msg, entrada, nome, tamanho, unique_id
+                )
+            else:
+                await reutilizar_arquivo(
+                    update, context, msg, entrada, nome, tamanho, unique_id
+                )
             return
 
     if cfg.max_mb and tamanho and tamanho > cfg.max_mb * 1024 * 1024:
@@ -2195,6 +2318,12 @@ async def receber(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 url = f"{BASE_API}/file/bot{cfg.token}/{caminho_arquivo}"
             await baixar(url, baixado_path, progresso)
 
+        sha_original = ""
+        if cfg.cache_reutilizar and cache is not None:
+            sha_original = await asyncio.to_thread(
+                CacheArquivos.hash_arquivo, baixado_path
+            )
+
         # 1.5) normaliza áudio (MP3), vídeo (MP4 H.264/AAC) e imagem
         if cfg.converter_perguntar:
             analise = analisar_conversao(cfg, baixado_path, nome)
@@ -2223,7 +2352,10 @@ async def receber(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 destino.parent.mkdir(parents=True, exist_ok=True)
                 shutil.move(str(baixado_path), str(destino))
                 if cache is not None and cfg.cache_reutilizar:
-                    cache.registrar(unique_id, destino, nome, tamanho, "original")
+                    cache.registrar(
+                        unique_id, destino, nome, tamanho, "original",
+                        sha256=sha_original,
+                    )
                 await editar(
                     estado,
                     f"⚠️ <b>{html.escape(nome)}</b> baixado, mas a conversão para PowerPoint "
@@ -2234,7 +2366,10 @@ async def receber(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             if cfg.pdf_manter_original:
                 shutil.move(str(baixado_path), str(nome_livre(pasta / nome)))
             if cache is not None and cfg.cache_reutilizar:
-                cache.registrar(unique_id, destino, nome, tamanho, "final")
+                cache.registrar(
+                    unique_id, destino, nome, tamanho, "final",
+                    sha256=sha_original,
+                )
             texto = (
                 f"✅ <b>{html.escape(nome)}</b>\n"
                 f"🔄 Convertido para PowerPoint ({paginas} "
@@ -2251,7 +2386,10 @@ async def receber(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             shutil.move(str(baixado_path), str(destino))
             if cache is not None and cfg.cache_reutilizar:
                 tipo = "original" if (aviso_conversao or "").startswith("⚠️") else "final"
-                cache.registrar(unique_id, destino, nome, tamanho, tipo)
+                cache.registrar(
+                    unique_id, destino, nome, tamanho, tipo,
+                    sha256=sha_original,
+                )
             texto = (
                 f"✅ <b>{html.escape(nome)}</b>\n"
                 f"📁 Salvo em:\n<code>{html.escape(str(destino))}</code>\n"
@@ -2273,6 +2411,45 @@ async def receber(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             pass
     finally:
         shutil.rmtree(temporario, ignore_errors=True)
+
+
+async def botao_cache(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Responde ao botão 'usar o salvo' / 'reenviar'."""
+    consulta = update.callback_query
+    partes = (consulta.data or "").split("|")
+    pendentes = context.bot_data.setdefault("cache_pendentes", {})
+    pendente = pendentes.pop(partes[1], None) if len(partes) == 3 else None
+    msg = consulta.message
+
+    if pendente is None:
+        await consulta.answer("Essa opção expirou.", show_alert=True)
+        return
+    if consulta.from_user.id != pendente["user"]:
+        await consulta.answer("Só quem enviou o arquivo pode escolher.", show_alert=True)
+        return
+
+    await consulta.answer()
+    try:
+        await msg.edit_reply_markup(None)
+    except Exception:  # noqa: BLE001
+        pass
+
+    if partes[2] == "u":
+        await reutilizar_arquivo(
+            update, context, msg, pendente["entrada"], pendente["nome"],
+            pendente["tamanho"], pendente["uid"],
+        )
+        return
+
+    # Reenviar: processa de novo a mensagem original, ignorando o cache 1 vez.
+    context.bot_data["cache_ignore_once"] = pendente["uid"]
+    from types import SimpleNamespace
+    fake_update = SimpleNamespace(
+        effective_message=pendente["msg"],
+        effective_user=consulta.from_user,
+    )
+    await editar(msg, f"📥 Reenviando <b>{html.escape(pendente['nome'])}</b>…")
+    await receber(fake_update, context)
 
 
 def configurar_log(cfg: Config) -> None:
@@ -2429,6 +2606,7 @@ def preparar_aplicacao(cfg: Config) -> Application:
     app.add_handler(CommandHandler("upload", cmd_enviar))
     app.add_handler(CallbackQueryHandler(botao_youtube, pattern=r"^yt\|"))
     app.add_handler(CallbackQueryHandler(botao_converter, pattern=r"^conv\|"))
+    app.add_handler(CallbackQueryHandler(botao_cache, pattern=r"^cache\|"))
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, receber))
     return app
 

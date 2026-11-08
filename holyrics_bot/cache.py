@@ -7,6 +7,7 @@ falhou na conversão (para tentar converter de novo sem baixar).
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -60,8 +61,20 @@ class CacheArquivos:
                 return dict(item)
             return None
 
+    @staticmethod
+    def hash_arquivo(caminho: Path) -> str:
+        """SHA-256 do conteúdo (leitura em blocos)."""
+        try:
+            digest = hashlib.sha256()
+            with open(caminho, "rb") as arquivo:
+                for bloco in iter(lambda: arquivo.read(1024 * 1024), b""):
+                    digest.update(bloco)
+            return digest.hexdigest()
+        except Exception:  # noqa: BLE001
+            return ""
+
     def registrar(self, uid: str, caminho: Path, nome: str, tamanho: int,
-                  tipo: str = "final") -> None:
+                  tipo: str = "final", sha256: str | None = None) -> None:
         if not uid or not caminho:
             return
         with self._lock:
@@ -71,6 +84,7 @@ class CacheArquivos:
                 "nome": nome,
                 "tamanho": int(tamanho or 0),
                 "tipo": tipo,
+                "sha256": sha256 if sha256 is not None else self.hash_arquivo(Path(caminho)),
                 "quando": time.time(),
             }
             self._salvar()
