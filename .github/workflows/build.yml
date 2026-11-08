@@ -1,0 +1,102 @@
+name: Build e release
+
+on:
+  push:
+    tags:
+      - "v*"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    name: Testes (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependências
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-venv ffmpeg
+      - name: Rodar a suíte
+        run: |
+          python3 -m venv .venv
+          . .venv/bin/activate
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python testes/teste_local.py
+
+  build-windows:
+    name: Windows (.exe)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - name: Instalar ffmpeg
+        run: choco install ffmpeg -y --no-progress
+      - name: Gerar executável
+        shell: pwsh
+        run: .\build-windows.ps1
+      - name: Empacotar
+        shell: pwsh
+        run: Compress-Archive -Path dist\HolyricsBot\* -DestinationPath HolyricsBot-Windows.zip -Force
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HolyricsBot-Windows
+          path: HolyricsBot-Windows.zip
+          if-no-files-found: error
+
+  build-linux:
+    name: Linux (binário)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependências
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-tk python3-venv xz-utils
+      - name: Baixar ffmpeg estático (vai embutido no pacote)
+        run: |
+          mkdir -p bin /tmp/ffmpeg
+          curl -L --fail --retry 3 -o /tmp/ffmpeg.tar.xz \
+            https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-linux64-gpl.tar.xz
+          tar -xJf /tmp/ffmpeg.tar.xz -C /tmp/ffmpeg --strip-components=1
+          cp /tmp/ffmpeg/bin/ffmpeg bin/ffmpeg
+          cp /tmp/ffmpeg/bin/ffprobe bin/ffprobe
+          chmod +x bin/ffmpeg bin/ffprobe
+          ./bin/ffmpeg -version | head -1
+      - name: Gerar binário
+        run: ./build-linux.sh
+      - name: Empacotar
+        run: |
+          rm -f dist/HolyricsBot/HolyricsBot.desktop
+          tar -czf HolyricsBot-Linux.tar.gz -C dist HolyricsBot
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HolyricsBot-Linux
+          path: HolyricsBot-Linux.tar.gz
+          if-no-files-found: error
+
+  release:
+    name: Publicar release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [test, build-windows, build-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            artifacts/HolyricsBot-Windows.zip
+            artifacts/HolyricsBot-Linux.tar.gz

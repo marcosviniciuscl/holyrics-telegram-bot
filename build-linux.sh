@@ -78,6 +78,11 @@ StartupWMClass=HolyricsBot
 EOF
 chmod +x "$DESKTOP"
 
+# O pacote pode ser movido: este script recria o atalho no lugar certo.
+cp criar-atalho.sh dist/HolyricsBot/criar-atalho.sh
+chmod +x dist/HolyricsBot/criar-atalho.sh
+cp config.example.json dist/HolyricsBot/config.example.json 2>/dev/null || true
+
 if [ "$INSTALAR" -eq 1 ]; then
     mkdir -p "$HOME/.local/share/applications"
     cp "$DESKTOP" "$HOME/.local/share/applications/HolyricsBot.desktop"

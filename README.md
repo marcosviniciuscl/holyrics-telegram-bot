@@ -191,6 +191,29 @@ convertido pelo ffmpeg que já vem no app.
 - Log: `bot.log` ao lado do executável.
 - `config.json` guarda token e chaves — **não compartilhe** esse arquivo.
 
+## Builds automáticos (GitHub Actions)
+
+O workflow [`.github/workflows/build.yml`](.github/workflows/build.yml) gera os
+dois pacotes prontos:
+
+- **`HolyricsBot-Windows.zip`** — `HolyricsBot.exe` + tudo embutido;
+- **`HolyricsBot-Linux.tar.gz`** — binário + `criar-atalho.sh` + tudo embutido
+  (inclui um ffmpeg estático baixado no build e embutido no pacote).
+
+Como usar:
+
+- **Manual:** no GitHub, aba **Actions** → **Build e release** → **Run workflow**.
+  Os pacotes ficam nos **Artifacts** da execução.
+- **Por tag (release):**
+  ```bash
+  git tag v1.0.0
+  git push origin v1.0.0
+  ```
+  O workflow builda os dois e cria uma **Release** com os arquivos anexados.
+
+O CI baixa as dependências e o ffmpeg **uma vez, no build**. O pacote final não
+depende de download nenhum ao abrir.
+
 ## Removendo o serviço antigo (Linux)
 
 As versões anteriores rodavam como serviço systemd. Isso foi removido do
@@ -234,6 +257,8 @@ servidor-bot-api/     # opcional: servidor local do Bot API (sem limite de 20 MB
 | Sintoma | O que fazer |
 |---|---|
 | App não abre | veja se o executável/binário existe; rode o build de novo |
+| Windows: “O Windows protegeu o computador” | clique em **Mais informações → Executar assim mesmo** (o .exe não é assinado) |
+| Linux: bandeja não aparece | use KDE/XFCE/Cinnamon/MATE ou instale a extensão AppIndicator no GNOME |
 | Ícone não aparece na bandeja | clique na seta “^” ao lado do relógio; o app pode estar atrás |
 | “Não autorizado” no Telegram | confira os IDs autorizados (use `/id`) |
 | Vídeo ainda não abre no Holyrics | veja o log; se o arquivo já era H.264/AAC+faststart, o problema pode ser o próprio arquivo |

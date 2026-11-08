@@ -43,16 +43,21 @@ if (-not (Test-Path ".venv\Scripts\pyinstaller.exe")) {
 Write-Host "==> Conferindo ffmpeg/ffprobe" -ForegroundColor Cyan
 New-Item -ItemType Directory -Force -Path bin | Out-Null
 foreach ($nome in @("ffmpeg.exe", "ffprobe.exe")) {
-    if (-not (Test-Path "bin\$nome")) {
-        $base = $nome -replace "\.exe$", ""
-        $cmd = Get-Command $base -ErrorAction SilentlyContinue
-        if ($cmd) {
-            Copy-Item $cmd.Source "bin\$nome"
-            Write-Host "    copiado $nome do PATH"
-        } else {
-            throw "Coloque $nome em .\bin (o build nao baixa nada)."
-        }
+    if (Test-Path "bin\$nome") { continue }
+    $base = $nome -replace "\.exe$", ""
+    $cmd = Get-Command $base -ErrorAction SilentlyContinue
+    if (-not $cmd) {
+        throw "Coloque $nome em .\bin (o build nao baixa nada)."
     }
+    $real = $cmd.Source
+    # O Chocolatey instala um "shim" em chocolatey\bin; copiamos o binario real.
+    if ($real -like "*chocolatey\bin*" -and $env:ChocolateyInstall) {
+        $alt = Get-ChildItem "$env:ChocolateyInstall\lib\ffmpeg" -Recurse -Filter $nome `
+            -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($alt) { $real = $alt.FullName }
+    }
+    Copy-Item $real "bin\$nome"
+    Write-Host "    copiado $nome de $real"
 }
 
 # --- build -------------------------------------------------------------
