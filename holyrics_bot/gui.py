@@ -271,7 +271,9 @@ class Aplicativo:
 
         self.dados = app_core.carregar(self.caminho_config)
         self._mtime_config = self._mtime_config_file()
-        self.runner = app_core.BotRunner(self.caminho_config, self._status_cb)
+        self.runner = app_core.BotRunner(
+            self.caminho_config, self._status_cb, self.fila_log
+        )
 
         self.root = tk.Tk()
         self.root.withdraw()
@@ -286,6 +288,7 @@ class Aplicativo:
         self._criar_cabecalho()
         self._criar_abas()
         self._criar_rodape()
+        self._log_ui(f"Configuração carregada de {self.caminho_config}")
 
         self.root.after(120, self._poll_ui)
         self.root.after(150, self._poll_log)

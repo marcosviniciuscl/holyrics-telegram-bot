@@ -1475,6 +1475,11 @@ def converter_midia(origem: Path, destino: Path, cfg: Config, alvo: str, modo: s
     ffmpeg = caminho_ffmpeg(cfg)
     if not ffmpeg:
         raise RuntimeError("ffmpeg não encontrado para converter")
+    if origem.resolve() == destino.resolve():
+        raise RuntimeError(
+            "origem e destino da conversão são o mesmo arquivo "
+            f"({origem}) — escolha um nome de saída diferente"
+        )
     estado = estado if estado is not None else {}
 
     base = [ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-nostats",
@@ -1575,7 +1580,12 @@ async def normalizar_arquivo(mensagem, origem: Path, nome: str, cfg: Config) -> 
 
     alvo = analise["alvo"]
     novo_nome = nome_seguro(Path(nome).with_suffix("." + alvo).name)
-    saida = origem.with_name(novo_nome)
+    # Nunca gravar por cima da origem: um .mp4 incompatível tem o mesmo nome
+    # final, e o ffmpeg recusa "output same as input".
+    saida = origem.with_name(
+        f"{Path(novo_nome).stem}-convertido-{secrets.token_hex(3)}"
+        f"{Path(novo_nome).suffix}"
+    )
     LOG.info("Convertendo %s -> %s (%s: %s)", nome, alvo,
              analise.get("modo"), analise.get("motivo"))
     await rodar_conversao(mensagem, origem, saida, cfg, alvo,
@@ -1680,7 +1690,10 @@ async def botao_converter(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         if converter:
             alvo = pendente["alvo"]
             novo_nome = nome_seguro(Path(nome).with_suffix("." + alvo).name)
-            saida = origem.with_name(novo_nome)
+            saida = origem.with_name(
+                f"{Path(novo_nome).stem}-convertido-{secrets.token_hex(3)}"
+                f"{Path(novo_nome).suffix}"
+            )
             await editar(mensagem, f"🔄 Convertendo <b>{html.escape(nome)}</b> para {alvo.upper()}…")
             await asyncio.to_thread(converter_midia, origem, saida, cfg, alvo, "reencode", None)
             origem, nome = saida, novo_nome

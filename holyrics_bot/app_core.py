@@ -169,10 +169,14 @@ class BotRunner:
     """Roda a Application do Telegram numa thread com o próprio event loop."""
 
     def __init__(self, caminho_config: Path,
-                 ao_status: Callable[[str, str], None] | None = None):
+                 ao_status: Callable[[str, str], None] | None = None,
+                 fila_log: "queue.Queue[str] | None" = None):
         self.caminho_config = Path(caminho_config)
         self.ao_status = ao_status or (lambda estado, detalhe: None)
-        self.fila_log: "queue.Queue[str]" = queue.Queue()
+        # A interface e o executor precisam usar a MESMA fila.
+        self.fila_log: "queue.Queue[str]" = (
+            fila_log if fila_log is not None else queue.Queue()
+        )
         self._thread: threading.Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._app = None
