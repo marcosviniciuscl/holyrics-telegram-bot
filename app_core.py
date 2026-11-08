@@ -198,6 +198,10 @@ class BotRunner:
 
     def _rodar(self) -> None:
         try:
+            # Em thread no Windows, o loop Selector é mais previsível que o
+            # Proactor (usado por padrão no thread principal).
+            if os.name == "nt":
+                asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
             self._status("iniciando", "Conectando ao Telegram…")
             cfg = bot.Config(self.caminho_config)
             bot.configurar_log(cfg)
