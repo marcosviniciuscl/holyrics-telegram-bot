@@ -51,7 +51,24 @@ from telegram.ext import (
 )
 
 LOG = logging.getLogger("holyrics-bot")
-RAIZ = Path(__file__).resolve().parent
+
+
+def _dir_recursos() -> Path:
+    """Onde ficam os arquivos empacotados (bin/, assets/): _MEIPASS no .exe."""
+    if getattr(sys, "frozen", False):
+        return Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent))
+    return Path(__file__).resolve().parent
+
+
+def _dir_app() -> Path:
+    """Onde ficam config.json e bot.log: ao lado do .exe (ou do bot.py)."""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+
+RAIZ = _dir_recursos()
+DIR_APP = _dir_app()
 BASE_API = "https://api.telegram.org"  # trocável nos testes
 
 # ---------------------------------------------------------------------------
@@ -144,6 +161,7 @@ class Config:
         self.pastas: dict[str, Path] = {
             cat: self._resolver(caminho, cam)
             for cat, cam in (bruto.get("pastas") or {}).items()
+            if str(cam or "").strip()
         }
 
         pdf = bruto.get("pdf") or {}
@@ -294,9 +312,10 @@ def caminho_ffmpeg(cfg: "Config") -> str | None:
             return cfg.yt_ffmpeg
         LOG.warning("youtube.ffmpeg aponta para um arquivo que não existe (%s) — tentando os próximos", cfg.yt_ffmpeg)
     nome = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
-    local = RAIZ / "bin" / nome
-    if local.exists():
-        return str(local)
+    for base in (DIR_APP, RAIZ):
+        local = base / "bin" / nome
+        if local.exists():
+            return str(local)
     return shutil.which("ffmpeg")
 
 
@@ -2012,19 +2031,30 @@ async def receber(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 def configurar_log(cfg: Config) -> None:
     nivel = getattr(logging, cfg.log_nivel, logging.INFO)
     formato = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+    handlers: list[logging.Handler] = []
 
-    console = logging.StreamHandler(sys.stdout)
-    console.setFormatter(formato)
+    # Em app com janela (pythonw/.exe) não existe stdout.
+    if sys.stdout is not None:
+        console = logging.StreamHandler(sys.stdout)
+        console.setFormatter(formato)
+        handlers.append(console)
 
-    destino = Path(cfg.log_arquivo)
-    if not destino.is_absolute():
-        destino = RAIZ / destino
-    arquivo = logging.handlers.RotatingFileHandler(
-        destino, maxBytes=2 * 1024 * 1024, backupCount=3, encoding="utf-8"
-    )
-    arquivo.setFormatter(formato)
+    try:
+        destino = Path(cfg.log_arquivo)
+        if not destino.is_absolute():
+            destino = DIR_APP / destino
+        arquivo = logging.handlers.RotatingFileHandler(
+            destino, maxBytes=2 * 1024 * 1024, backupCount=3, encoding="utf-8"
+        )
+        arquivo.setFormatter(formato)
+        handlers.append(arquivo)
+    except Exception:  # noqa: BLE001 — sem permissão de arquivo não é fatal
+        pass
 
-    logging.basicConfig(level=nivel, handlers=[console, arquivo])
+    if not handlers:
+        handlers.append(logging.NullHandler())
+
+    logging.basicConfig(level=nivel, handlers=handlers, force=True)
 
 
 def verificar(cfg: Config) -> None:
@@ -2097,27 +2127,8 @@ async def publicar_comandos(app: Application) -> None:
         LOG.warning("Não consegui publicar o menu de comandos: %s", e)
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Bot do Telegram x Holyrics")
-    parser.add_argument("--config", default="config.json", help="caminho do arquivo de configuração")
-    parser.add_argument("--verificar", action="store_true", help="confere a configuração e sai")
-    args = parser.parse_args()
-
-    caminho = Path(args.config)
-    if not caminho.is_absolute():
-        caminho = RAIZ / caminho
-    cfg = Config(caminho)
-    configurar_log(cfg)
-
-    if args.verificar:
-        verificar(cfg)
-        return
-
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    LOG.info("Iniciando bot (pastas: %s)", {k: str(v) for k, v in cfg.pastas.items()})
-
-    # Raiz usada para montar a URL de download dos arquivos. Com o servidor local
-    # do Bot API, aponta para ele; na nuvem, para api.telegram.org.
+def preparar_aplicacao(cfg: Config) -> Application:
+    """Monta a Application do Telegram (usada pelo CLI e pelo app de bandeja)."""
     global BASE_API
     if cfg.base_file_url.endswith("/file/bot"):
         BASE_API = cfg.base_file_url[: -len("/file/bot")]
@@ -2132,7 +2143,9 @@ def main() -> None:
             store = MinioStore(cfg)
             store.garantir_bucket()
             if cfg.minio_bucket_publico:
-                antigos = store.limpar_antigos("links/", cfg.minio_expira_min, cfg.minio_bucket_publico)
+                antigos = store.limpar_antigos(
+                    "links/", cfg.minio_expira_min, cfg.minio_bucket_publico
+                )
                 if antigos:
                     LOG.info("Links de upload antigos removidos: %d", antigos)
             LOG.info("MinIO pronto: %s (bucket '%s')", store.endpoint, store.bucket)
@@ -2167,7 +2180,28 @@ def main() -> None:
     app.add_handler(CallbackQueryHandler(botao_youtube, pattern=r"^yt\|"))
     app.add_handler(CallbackQueryHandler(botao_converter, pattern=r"^conv\|"))
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, receber))
+    return app
 
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Bot do Telegram x Holyrics")
+    parser.add_argument("--config", default="config.json", help="caminho do arquivo de configuração")
+    parser.add_argument("--verificar", action="store_true", help="confere a configuração e sai")
+    args = parser.parse_args()
+
+    caminho = Path(args.config)
+    if not caminho.is_absolute():
+        caminho = DIR_APP / caminho
+    cfg = Config(caminho)
+    configurar_log(cfg)
+
+    if args.verificar:
+        verificar(cfg)
+        return
+
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    LOG.info("Iniciando bot (pastas: %s)", {k: str(v) for k, v in cfg.pastas.items()})
+    app = preparar_aplicacao(cfg)
     LOG.info("Bot no ar. Ctrl+C para encerrar.")
     app.run_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
 

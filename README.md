@@ -1,419 +1,216 @@
-# Bot do Telegram × Holyrics
+# Holyrics Bot
 
-Bot do Telegram que recebe arquivos e salva cada um **na pasta correspondente do
-Holyrics**. PDF é **convertido para PowerPoint (.pptx)** — o formato de
-apresentação que o Holyrics usa — e salvo na pasta de apresentações.
+Aplicativo para **Windows** que recebe arquivos pelo **Telegram** e salva nas
+pastas do **Holyrics**. Fica na **bandeja do sistema** com o status do bot e uma
+janela de configuração simples.
 
-Roda como **serviço** no Windows (Agendador de Tarefas) e no Linux (systemd),
-com tudo configurado em um único `config.json`.
+> Não é serviço, não é tarefa agendada. Você abre com **dois cliques** e ele fica
+> na bandeja. Para sair: botão direito no ícone → **Sair**.
 
----
+## O que ele faz
 
-## Como se comporta
+- **Salva por tipo** nas pastas configuradas: áudio, vídeo, imagem,
+  apresentações, documentos e outros.
+- **Normaliza para o Holyrics**:
+  - vídeo → **MP4 H.264 + AAC**, pixel format 8 bits e *faststart*, mantendo
+    resolução, proporção e taxa de quadros;
+  - áudio → **MP3**;
+  - imagem → **JPG/PNG** (formatos como WebP, TIFF, BMP, HEIC, AVIF, JFIF são
+    convertidos, com transparência preservada em PNG).
+  - A conversão só acontece quando o arquivo **não está no padrão** — o bot
+    analisa o codec de verdade com `ffprobe`, não só a extensão.
+- **PDF → PowerPoint** (.pptx) automaticamente.
+- **YouTube**: manda o link, escolhe vídeo (MP4) ou áudio (MP3).
+- **Arquivos grandes**: acima de 20 MB (limite do Telegram na nuvem), usa o
+  **MinIO** e devolve um link curto temporário.
+- **Links diretos**: cola um link de arquivo e o bot baixa e salva.
+- **Feedback no Telegram** em todas as etapas: download, conversão (com
+  porcentagem), envio e pasta final.
 
-1. Você envia um arquivo no Telegram.
-2. O bot responde **na mesma mensagem**: `📥 Recebi arquivo.mp4 (12,3 MB) / Baixando… 47%`.
-   O texto é atualizado na própria mensagem (nada de enxurrada de mensagens).
-3. Ao terminar ele edita a mensagem para o resultado final:
+## Rodar no Windows
+
+### Opção A — executável (recomendado)
+
+O executável leva **tudo embutido**: Python, dependências, `ffmpeg`, `ffprobe`
+e `yt-dlp`. Depois de gerado, **não baixa nada** ao abrir.
+
+Gere uma vez, no Windows:
+
+```powershell
+# na pasta do projeto
+Set-ExecutionPolicy -Scope Process Bypass -Force
+.\build-windows.ps1
+```
+
+O script:
+- cria o `.venv` e instala as dependências (uma vez);
+- usa o `ffmpeg.exe`/`ffprobe.exe` que você já tem (na pasta `bin\` ou no `PATH`)
+  — **não baixa ffmpeg**;
+- gera **`dist\HolyricsBot\HolyricsBot.exe`**.
+
+Depois é só dar **dois cliques** em `HolyricsBot.exe`.
+
+> O build precisa rodar no Windows (o PyInstaller não gera `.exe` a partir do
+> Linux). O executável final é autossuficiente.
+
+### Opção B — sem gerar o .exe
+
+Se o `.venv` já existe na pasta:
 
 ```
-✅ missa.pdf
-🔄 Convertido para PowerPoint (14 slides)
-📁 Salvo em:
-C:\Holyrics\files\Apresentacoes\missa.pptx
-📦 3,1 MB
+executar-windows.bat
 ```
 
-| Você envia | Vai para a pasta |
+Ele abre com `pythonw.exe` (sem console) e o app vai para a bandeja.
+
+## Primeira configuração
+
+Na primeira vez, a janela de configuração abre. Preencha:
+
+1. **Telegram** → token do [@BotFather](https://t.me/BotFather) e seu ID
+   (fale com o [@userinfobot](https://t.me/userinfobot) ou use `/id` no bot).
+2. **Pastas** → clique em **Escolher…** em cada categoria e aponte para as
+   pastas do Holyrics no Windows (ex.: `C:\Holyrics\files\...`).
+3. Clique em **Salvar e aplicar**.
+
+A janela fecha para a bandeja e o bot começa a receber arquivos.
+
+## Bandeja do sistema
+
+| Ação | O que faz |
 |---|---|
-| áudio (mp3, wav, m4a, ogg, flac, …) | `pastas.audio` |
-| vídeo (mp4, mkv, avi, mov, webm, …) | `pastas.video` |
-| imagem (jpg, png, gif, webp, …) | `pastas.imagem` |
-| **PDF** | convertido em `.pptx` → `pastas.apresentacao` |
-| PowerPoint (pptx, ppt, ppsx) | `pastas.apresentacao` |
-| documento (txt, docx, rtf, odt, csv, srt…) | `pastas.documento` |
-| qualquer outra coisa | `pastas.outros` |
+| Clique / duplo clique no ícone | abre a configuração |
+| Botão direito → **Iniciar bot** | inicia o bot |
+| Botão direito → **Parar bot** | para o bot |
+| Botão direito → **Status** | mostra online/parado/erro |
+| Botão direito → **Sair** | fecha o app de verdade |
+| Fechar a janela (X) | apenas esconde; continua na bandeja |
 
-Foto/áudio/voz/vídeo enviados "pelo modo rápido" do Telegram (sem ser como
-arquivo) também funcionam: o nome recebe a data/hora automaticamente.
-Se já existir um arquivo com o mesmo nome, o bot cria `nome (2).ext` — nunca
-sobrescreve nada.
+O ícone muda de cor conforme o status (verde = online, amarelo = conectando,
+cinza = parado, vermelho = erro).
 
-### Conversão automática para os formatos do Holyrics
+## Abas da configuração
 
-O Holyrics funciona melhor com **MP4 (H.264 + AAC)** para vídeo, **MP3** para
-áudio e **JPG/PNG** para imagem. O bot analisa o arquivo de verdade (com
-`ffprobe`) e converte **só quando precisa**, automaticamente, mostrando o
-andamento no Telegram:
+- **Telegram** — token, IDs autorizados e aceitar grupos.
+- **Pastas** — uma pasta para cada categoria do Holyrics.
+- **Conversão** — perguntar antes de converter, qualidade do MP3, CRF/preset do
+  vídeo e opções do PDF.
+- **YouTube** — ativar, resolução máxima, duração máxima, bitrate do MP3 e
+  cookies.
+- **MinIO** — endpoint, chaves, buckets, página de upload e tempos.
+- **Avançado** — links diretos, limite do Telegram e nível do log.
+- **Log** — o que o bot está fazendo, em tempo real.
 
-```
-🔄 Convertendo para MP4… 47%
-✅ video.mp4
-📁 Salvo em: ...
-📦 58,3 MB
-🔄 Convertido para MP4
-```
+## Conversão de vídeo (o padrão do Holyrics)
 
-**Vídeo** — normalizado para MP4 com:
-- vídeo **H.264** (perfil high) e pixel format **yuv420p** (8 bits);
-- áudio **AAC**;
-- **faststart** (começa a tocar antes de baixar tudo).
+O Holyrics abre e reproduz de forma confiável com:
 
-Se já é MP4 H.264/AAC com faststart, nada é feito. Se só o contêiner/áudio está
-fora do padrão, faz **remux/cópia** (rápido, sem perder qualidade). Se o codec de
-vídeo é incompatível (HEVC, VP9, MPEG-4, 10 bits…), **reencoda** com CRF (padrão
-18), **sem redimensionar** — resolução, proporção e taxa de quadros preservadas.
+| Item | Padrão |
+|---|---|
+| Contêiner | MP4 |
+| Vídeo | H.264 (perfil high) |
+| Pixel format | yuv420p (8 bits) |
+| Áudio | AAC |
+| Extras | `faststart` (começa antes de baixar tudo) |
 
-**Áudio** — tudo vira **MP3** (192 kbps por padrão). Se já for MP3, fica como está.
-
-**Imagem** — JPG/PNG/GIF ficam como estão. WebP, TIFF, BMP, HEIC, AVIF e JFIF são
-convertidos para **JPG** (ou **PNG** se tiver transparência), mantendo a qualidade.
-
-Se a conversão falhar, o bot **salva o original** e avisa no chat (não perde o
-arquivo). PDF continua indo para PowerPoint automaticamente.
+Se o arquivo já está nesse padrão, **nada é feito**. Se só o contêiner/áudio
+está fora, o bot faz **remux/cópia** (rápido, sem perda). Se o codec de vídeo é
+incompatível (HEVC, VP9, MPEG-4, 10 bits…), ele **reencoda** com `libx264` e
+CRF configurável (padrão **18**), **sem redimensionar**.
 
 Configuração:
 
 ```json
 "converter": {
-  "perguntar": false,        // true = pergunta antes de converter (com botões)
-  "audio_bitrate_kbps": 192, // qualidade do MP3
-  "video_crf": 18,           // 18 = alta qualidade (menor = melhor/maior)
-  "video_preset": "medium"   // veryfast/medium/slow: velocidade x compressão
+  "perguntar": false,
+  "audio_bitrate_kbps": 192,
+  "video_crf": 18,
+  "video_preset": "medium"
 }
 ```
 
-### Link do YouTube
+## MinIO (arquivos grandes)
 
-Mande um link de vídeo do YouTube (funciona com `youtu.be`, `shorts`, `live`,
-`m.youtube.com` e `music.youtube.com`) e o bot:
-
-1. **verifica o vídeo** e responde com o título, o canal, a duração e as opções
-   (com tamanho aproximado de cada uma):
-
-```
-🎬 Hino Teste — Ação de Graças
-👤 Canal Teste · ⏱ 4:13
-Escolha o formato para baixar:
-   [ 🎬 1080p · ~140,3 MB ]  [ 🎬 720p · ~80,2 MB ]
-   [ 🎵 MP3 192k · ~4,9 MB ]  [ 🎵 MP3 128k (leve) ]
-```
-
-> O **áudio do YouTube é sempre salvo em MP3** e o **vídeo em MP4** — os formatos
-> que o Holyrics prefere.
-
-2. Ao clicar em uma opção, mostra o **progresso do download** (%, tamanho,
-   velocidade e tempo restante) e depois o **progresso da conversão**
-   (`🎧 Convertendo para MP3…` ou `🎬 Juntando vídeo + áudio…`), tudo na mesma
-   mensagem.
-
-3. No fim, informa onde salvou:
-
-```
-✅ Hino Teste
-🎵 MP3 192 kbps
-📁 Salvo em:
-C:\Holyrics\files\Audios\Hino Teste.mp3
-📦 6,1 MB · ⏱ 4:13
-```
-
-Vídeo vai para `pastas.video`, áudio para `pastas.audio`.
-**Não existe o limite de 20 MB aqui** — esse limite é só para arquivos enviados
-pelo Telegram; do YouTube o download é feito direto, com o tamanho que o vídeo tiver.
-
-Configuração:
-
-```json
-"youtube": {
-  "ativo": true,
-  "altura_maxima": 1080,      // maior resolução oferecida
-  "duracao_maxima_min": 120,  // recusa vídeos mais longos que isso
-  "mp3_bitrate_kbps": 192,    // qualidade do MP3 convertido
-  "ffmpeg": "",               // caminho do ffmpeg (vazio = usa o do PATH)
-  "cookies": ""               // opcional, veja abaixo
-}
-```
-
-Para o MP3 e para juntar vídeo+áudio (qualquer coisa acima de 360p) o bot usa o
-**ffmpeg**. Os instaladores já cuidam disso: se não houver ffmpeg na máquina, eles
-baixam uma **versão portátil** para a pasta `bin/` do próprio bot (~100 MB, uma
-vez só) — **não precisa de administrador e não mexe no sistema**. O bot encontra
-essa cópia sozinho.
-
-A ordem de procura do bot é: `youtube.ffmpeg` no config → `bin/` do bot → PATH do
-sistema. Se preferir instalar no sistema: `sudo apt install ffmpeg` (Linux),
-`winget install Gyan.FFmpeg` (Windows) ou baixe em
-[ffmpeg.org](https://ffmpeg.org/download.html) e aponte em `youtube.ffmpeg`.
-
-Para baixar/conferir/atualizar a qualquer momento:
-
-```bash
-python baixar_ffmpeg.py --conferir   # mostra qual ffmpeg o bot está usando
-python baixar_ffmpeg.py              # baixa o portátil se ainda não tiver
-python baixar_ffmpeg.py --forcar     # baixa de novo (atualizar a versão)
-```
-
-Sem ffmpeg o bot continua funcionando, mas só oferece formatos prontos e sem MP3
-(ele avisa isso na mensagem de opções).
-
-O YouTube às vezes pede verificação ("Sign in to confirm you're not a bot"),
-principalmente em servidor/VPS. Nesse caso exporte os cookies do navegador
-(extensão *Get cookies.txt*) para um arquivo e aponte em `youtube.cookies`.
-Também vale atualizar o yt-dlp quando o YouTube mudar algo:
-
-```bash
-.venv/bin/pip install -U yt-dlp     # Linux
-.venv\Scripts\pip install -U yt-dlp # Windows
-```
-
-### Link de arquivo (http/https)
-
-Cole um **link direto** de arquivo (um `.mp4`, `.mp3`, `.pdf`, `.zip`…) e o bot
-baixa e salva na pasta da categoria, igual a um arquivo enviado. Formato e nome
-vêm do próprio link ou do cabeçalho `Content-Disposition`.
-
-```json
-"links": {
-  "ativo": true,
-  "tamanho_maximo_mb": 0,   // 0 = sem limite
-  "hosts_bloqueados": []    // ex.: ["drive.google.com"] para recusar
-}
-```
-
-### Arquivos maiores que 20 MB
-
-A API do Telegram só entrega para bots arquivos de **até 20 MB**. Há três formas
-de contornar (podem ser usadas juntas):
-
-**1) Servidor local do Bot API (recomendado)** — remove o limite e o usuário
-continua só mandando o arquivo no chat (até ~2 GB). Passo a passo em
-[`servidor-bot-api/README.md`](servidor-bot-api/README.md). Depois, no `config.json`:
-
-```json
-"telegram": {
-  "api_id": 123456,
-  "api_hash": "seu_api_hash",
-  "base_url": "http://127.0.0.1:8081/bot",
-  "base_file_url": "http://127.0.0.1:8081/file/bot",
-  "local_mode": true
-},
-"download": { "tamanho_maximo_mb": 2000 }
-```
-
-**2) Link de upload no MinIO** — quando o arquivo passa do limite, o bot manda um
-link; o usuário abre no navegador, o arquivo sobe para o seu MinIO, e o bot então
-baixa, salva na pasta certa e **apaga do MinIO**. Durante o download do MinIO o
-bot mostra o **progresso** (%, bytes) na mensagem.
+Para arquivos acima do limite do Telegram:
 
 ```json
 "minio": {
   "ativo": true,
   "endpoint": "https://minio.seudominio.com",
-  "access_key": "SUA_ACCESS_KEY",
-  "secret_key": "SUA_SECRET_KEY",
+  "access_key": "...",
+  "secret_key": "...",
   "bucket": "holyrics-entrada",
-  "secure": true,
-  "url_pagina_upload": "https://minio.seudominio.com/publico/uploader.html",
-  "bucket_publico": "publico",
+  "bucket_publico": "holyrics-publico",
+  "url_pagina_upload": "https://minio.seudominio.com/holyrics-publico/uploader.html",
   "expira_min": 120
 }
 ```
 
-A página de upload é o arquivo [`minio-uploader/index.html`](minio-uploader/index.html);
-veja como publicá-la no MinIO na seção *Página de upload no MinIO*, no fim deste
-arquivo.
+- O bot manda um **link curto**; o usuário sobe pelo navegador direto ao MinIO.
+- O bot **baixa com progresso**, salva na pasta e **apaga** do MinIO.
+- A página `minio-uploader/index.html` vai num bucket público de leitura. O
+  script `minio-uploader/publicar.sh` publica com o `mc`.
 
-O `bucket_publico` é onde o bot guarda um JSONzinho com a assinatura do upload.
-Com ele configurado, o link enviado no Telegram fica **curto**
-(`.../uploader.html#5fd179036184be15`) em vez de carregar a assinatura toda
-(que ocupava a tela). O JSON é apagado assim que o upload termina (ou por
-expiração). Se ficar vazio, o bot volta ao link longo.
+## YouTube
 
-> **Dica — evite subir o arquivo duas vezes.** Quando você manda um arquivo no
-> Telegram, o seu próprio app faz o upload completo para os servidores do
-> Telegram **antes** de o bot receber a mensagem; só então o bot gera o link do
-> MinIO e você sobe de novo. Para não repetir o envio, use o comando
-> **`/enviar`** (`/enviar video`, `/enviar audio`, …): ele devolve o link **antes**,
-> você envia uma única vez, direto ao MinIO, e o bot salva na pasta certa
-> inferindo a categoria pelo nome do arquivo.
+Mande um link (`youtube.com`, `youtu.be`, Shorts…). O bot oferece **2 opções de
+vídeo (sempre MP4)** e **2 de áudio (sempre MP3)**, com progresso. O áudio é
+convertido pelo ffmpeg que já vem no app.
 
-**3) Link direto** — o usuário hospeda o arquivo onde quiser e cola o link no
-chat (seção anterior).
+## Onde ficam os arquivos
 
----
+- Configuração: `config.json` **ao lado do executável**.
+- Log: `bot.log` ao lado do executável.
+- `config.json` guarda token e chaves — **não compartilhe** esse arquivo.
 
-## 1. Criar o bot no Telegram
+## Removendo o serviço antigo (Linux)
 
-1. No Telegram, fale com **@BotFather** → `/newbot` → escolha nome e usuário.
-2. Copie o **token** (algo como `8123456789:AAH...`).
-3. Descubra **seu ID** de usuário: fale com **@userinfobot** (é o número que ele
-   responde). Você vai colocar esse número em `usuarios_autorizados` — assim
-   só você consegue mandar arquivos para o bot.
-
-## 2. Configurar o `config.json`
-
-Copie `config.example.json` para `config.json` e ajuste:
-
-```json
-{
-  "telegram": {
-    "token": "8123456789:AAH...",     // token do BotFather
-    "usuarios_autorizados": [123456789], // seu ID; lista vazia = qualquer pessoa
-    "aceitar_grupos": false           // true = também aceita em grupos
-  },
-  "pastas": {
-    "audio":        "C:\\Holyrics\\files\\Audios",
-    "video":        "C:\\Holyrics\\files\\Videos",
-    "imagem":       "C:\\Holyrics\\files\\Imagens",
-    "apresentacao": "C:\\Holyrics\\files\\Apresentacoes",
-    "documento":    "C:\\Holyrics\\files\\Documentos",
-    "outros":       "C:\\Holyrics\\files\\Outros"
-  },
-  "pdf": {
-    "converter_para_pptx": true,  // false = salva o PDF original
-    "dpi": 200,                   // qualidade da conversão
-    "largura_max_px": 2400,       // limite da imagem de cada slide
-    "qualidade_jpeg": 90,
-    "manter_pdf_original": false  // true = guarda o PDF junto do .pptx
-  },
-  "download": {
-    "intervalo_progresso_segundos": 2, // de quanto em quanto tempo atualiza o %
-    "tamanho_maximo_mb": 20
-  },
-  "log": { "arquivo": "bot.log", "nivel": "INFO" }
-}
-```
-
-Detalhes importantes:
-
-* **Caminhos**: use `\\` (barra dupla) ou `/` no JSON. Também aceita
-  `%USERPROFILE%`, `{USERPROFILE}`, `{DOCUMENTS}` e `~`. Caminho relativo é
-  resolvido a partir da pasta do `config.json`. As pastas que não existirem são
-  criadas automaticamente quando o primeiro arquivo chegar.
-* **Onde ficam as pastas do Holyrics**: abra o Holyrics → tela de Arquivos/Mídias
-  e veja o caminho das pastas usadas pela sua instalação. Os caminhos do exemplo
-  são só sugestão — troque pelos seus. Em muitas instalações a biblioteca fica
-  dentro de `Documentos\Holyrics\...`.
-* Se depois de copiar o arquivo ele não aparecer na hora no Holyrics, use o
-  botão de **atualizar/importar** da tela de arquivos dele (o bot só grava no
-  disco; ele não mexe no banco do Holyrics).
-* **PDF → PPTX**: cada página do PDF vira um slide em 16:9 (13,333 × 7,5 pol.).
-  Página retrato (A4) entra centralizada, sem cortar nada.
-
-## 3. Instalar
-
-### Windows
-
-```powershell
-cd C:\caminho\do\bot
-Set-ExecutionPolicy -Scope Process Bypass -Force
-.\install-windows.ps1
-```
-
-O script cria o `.venv`, instala as dependências, cria o `config.json` (se não
-existir), registra a tarefa **BotHolyrics** (inicia com o seu login e reinicia
-sozinho se cair) e já sobe o bot.
-
-```powershell
-Start-ScheduledTask  -TaskName BotHolyrics   # iniciar
-Stop-ScheduledTask   -TaskName BotHolyrics   # parar
-.\install-windows.ps1 -Desinstalar           # remover a tarefa
-```
-
-Para rodar sem ninguém logado no Windows, use o [NSSM](https://nssm.cc):
-`nssm install BotHolyrics "C:\caminho\do\bot\.venv\Scripts\python.exe" "C:\caminho\do\bot\bot.py"`.
-
-### Linux
+As versões anteriores rodavam como serviço systemd. Isso foi removido do
+projeto. Se ainda houver um serviço instalado na máquina Linux:
 
 ```bash
-cd /caminho/do/bot
-sudo bash install-linux.sh         # cria o serviço systemd holyrics-bot
-journalctl -u holyrics-bot -f      # ver o log
-sudo systemctl restart holyrics-bot
+sudo systemctl disable --now holyrics-bot
+sudo rm -f /etc/systemd/system/holyrics-bot.service
+sudo systemctl daemon-reload
 ```
 
-### Testar antes de instalar
+## Modo CLI (opcional, para desenvolvimento)
+
+O motor do bot continua disponível:
 
 ```bash
-python bot.py --verificar    # mostra as pastas resolvidas e se dá para escrever nelas
-python baixar_ffmpeg.py --conferir # mostra qual ffmpeg o bot está usando
-python testes/teste_local.py # testa PDF→PPTX, download com progresso e YouTube
-python bot.py                # roda em primeiro plano (Ctrl+C encerra)
+python bot.py --verificar     # confere a configuração
+python bot.py                 # roda em primeiro plano (sem interface)
+python testes/teste_local.py  # testa conversão, download, regras, YouTube
 ```
 
-Requisitos: **Python 3.10+** e internet. O `ffmpeg` é baixado automaticamente pelo
-instalador quando não existe na máquina (versão portátil na pasta `bin/`).
+## Estrutura
 
-## Comandos do bot
-
-| Comando | O que faz |
-|---|---|
-| `/start` | ajuda |
-| `/pastas` | lista as pastas configuradas e o estado de cada uma (✅ / ⚠️ / ❌) |
-| `/id` | mostra seu ID do Telegram (para pôr em `usuarios_autorizados`) |
-| `/enviar [categoria]` | gera um link do MinIO para você enviar um arquivo grande **direto**, sem passar pelo Telegram |
-
-Os comandos aparecem automaticamente no **menu do Telegram** quando você digita
-`/` na conversa com o bot.
-
----
-
-## Página de upload no MinIO
-
-Para o usuário enviar arquivos grandes pelo navegador, publique
-`minio-uploader/index.html` num bucket com leitura pública. Com o cliente `mc`:
-
-```bash
-# 1) configure o alias uma vez
-mc alias set meuminio https://minio.seudominio.com SUA_ACCESS_KEY SUA_SECRET_KEY
-
-# 2) crie um bucket público de leitura
-mc mb meuminio/publico
-mc anonymous set download meuminio/publico
-
-# 3) publique a página (importante: tipo HTML)
-mc cp --attr "Content-Type=text/html; charset=utf-8" \
-  minio-uploader/index.html meuminio/publico/uploader.html
 ```
-
-Depois coloque a URL em `minio.url_pagina_upload`
-(`https://minio.seudominio.com/publico/uploader.html`) e o **mesmo bucket** em
-`minio.bucket_publico` (`publico`) — é onde o bot guarda o JSONzinho que deixa o
-link curto. O arquivo vai direto para o MinIO e **nunca passa pelo Telegram**.
-
-O bucket de destino (`minio.bucket`, padrão `holyrics-entrada`) pode continuar
-**privado** — os links são assinados e temporários.
-
----
-
-## Limites e observações
-
-* **20 MB por arquivo enviado no Telegram**: limite do próprio Telegram para bots
-  baixarem arquivos (não é do programa). Para arquivos maiores use o **servidor
-  local do Bot API**, o **link de upload no MinIO** ou um **link direto**. Isso
-  não vale para links do YouTube nem para links de arquivo, que são baixados
-  direto (sem esse limite).
-* O bot **não altera** o banco de dados do Holyrics — apenas grava os arquivos
-  nas pastas. O importar/atualizar é feito pelo próprio Holyrics.
-* Biblioteca de conversão: `pypdfium2` (renderiza o PDF) + `python-pptx`.
-  Não precisa de LibreOffice, Office nem Ghostscript instalados.
-* Requisitos: Python 3.10+. O `ffmpeg` (para MP3/merge do YouTube) é baixado
-  automaticamente pelo instalador — versão portátil em `bin/`, sem precisar de
-  administrador.
-* Os instaladores só **baixam** o ffmpeg quando ele não existe na máquina; se já
-  existir no PATH, nada é baixado.
+holyrics_bot_gui.py   # janela + bandeja (tkinter + pystray)
+app_core.py           # config.json, execução em thread, instância única
+bot.py                # motor do bot (Telegram, pastas, conversão, MinIO)
+minio_holyrics.py     # MinIO (S3)
+build-windows.ps1     # gera o .exe com tudo embutido
+HolyricsBot.spec      # configuração do PyInstaller
+executar-windows.bat  # abre pelo .venv (sem gerar .exe)
+assets/               # ícones do app/bandeja
+minio-uploader/       # página de upload e script de publicação
+servidor-bot-api/     # opcional: servidor local do Bot API (sem limite de 20 MB)
+```
 
 ## Problemas comuns
 
-| Sintoma | Causa provável |
+| Sintoma | O que fazer |
 |---|---|
-| `ERRO: config não encontrado` | renomeie `config.example.json` para `config.json` |
-| Bot não responde | token errado, ou outro programa usando o mesmo token (só um `getUpdates` por vez) |
-| `🔒 Não autorizado` | seu ID não está em `usuarios_autorizados` (use `/id`) |
-| `Falha ao receber ... Permission denied` | a pasta do Holyrics exige permissão de administrador — dê permissão de escrita ao usuário do serviço |
-| PDF virou PowerPoint mas com barras brancas | a página do PDF é retrato/A4; o slide é 16:9 — o conteúdo não é cortado |
-| Arquivo some depois de enviado | veja o `bot.log` na pasta do bot |
-| Link do YouTube: "Sign in to confirm you're not a bot" | o YouTube pediu verificação — configure `youtube.cookies` |
-| Link do YouTube: falha com "ffmpeg" | instale o ffmpeg ou aponte `youtube.ffmpeg` |
-| Link do YouTube: só aparece "Melhor disponível" | o yt-dlp não conseguiu listar resoluções — atualize com `pip install -U yt-dlp` |
-| Botão do YouTube: "Essa escolha expirou" | a opção foi consumida (ou o bot foi reiniciado) — mande o link de novo |
+| App não abre | veja se o `HolyricsBot.exe` existe; rode `build-windows.ps1` de novo |
+| Ícone não aparece na bandeja | clique na seta “^” ao lado do relógio; o app pode estar atrás |
+| “Não autorizado” no Telegram | confira os IDs autorizados (use `/id`) |
+| Vídeo ainda não abre no Holyrics | veja o log; se o arquivo já era H.264/AAC+faststart, o problema pode ser o próprio arquivo |
+| YouTube pede verificação | exporte `cookies.txt` e aponte na aba YouTube |
+| MinIO não conecta | confira endpoint/chaves e se o bucket existe |
+
+---
+
+Feito para Windows 10/11. O executável gerado é autossuficiente — nada de
+instalar Python, ffmpeg ou dependências na máquina de quem usa.
