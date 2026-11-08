@@ -1,8 +1,8 @@
 # Holyrics Bot
 
-Aplicativo para **Windows** que recebe arquivos pelo **Telegram** e salva nas
-pastas do **Holyrics**. Fica na **bandeja do sistema** com o status do bot e uma
-janela de configuração simples.
+Aplicativo para **Windows e Linux** que recebe arquivos pelo **Telegram** e
+salva nas pastas do **Holyrics**. Fica na **bandeja do sistema** com o status do
+bot e uma janela de configuração simples.
 
 > Não é serviço, não é tarefa agendada. Você abre com **dois cliques** e ele fica
 > na bandeja. Para sair: botão direito no ícone → **Sair**.
@@ -29,7 +29,7 @@ janela de configuração simples.
 
 ## Rodar no Windows
 
-### Opção A — executável (recomendado)
+### Executável (recomendado)
 
 O executável leva **tudo embutido**: Python, dependências, `ffmpeg`, `ffprobe`
 e `yt-dlp`. Depois de gerado, **não baixa nada** ao abrir.
@@ -50,18 +50,45 @@ O script:
 
 Depois é só dar **dois cliques** em `HolyricsBot.exe`.
 
-> O build precisa rodar no Windows (o PyInstaller não gera `.exe` a partir do
-> Linux). O executável final é autossuficiente.
+## Rodar no Linux
 
-### Opção B — sem gerar o .exe
+### Binário + atalho (recomendado)
 
-Se o `.venv` já existe na pasta:
-
+```bash
+sudo apt install python3-tk      # só para o build (Tkinter; o binário leva embutido)
+./build-linux.sh --instalar
 ```
+
+O script:
+- instala as dependências no `.venv` (uma vez);
+- usa o `ffmpeg`/`ffprobe` que você já tem (`bin/` ou `PATH`) — **não baixa**;
+- gera **`dist/HolyricsBot/HolyricsBot`** (com Tcl/Tk, Python e libs embutidos);
+- cria **`dist/HolyricsBot/HolyricsBot.desktop`** com caminhos absolutos e, com
+  `--instalar`, copia o atalho para o menu de aplicativos.
+
+Dê **dois cliques** no `.desktop` (ou no executável). O app fica na bandeja.
+
+> **Bandeja no Linux:** precisa de um ambiente com *system tray* — KDE, XFCE,
+> Cinnamon e MATE funcionam. No GNOME, instale a extensão **AppIndicator**.
+> Se a bandeja não aparecer, o atalho continua abrindo a janela normalmente.
+
+Cada build roda no **próprio sistema**: o PyInstaller não gera `.exe` a partir
+do Linux, nem um binário Linux a partir do Windows.
+
+### Rodar sem gerar o binário
+
+Se o `.venv` já existe:
+
+```bash
+# Windows
 executar-windows.bat
+
+# Linux (precisa de python3-tk instalado)
+./executar-linux.sh
 ```
 
-Ele abre com `pythonw.exe` (sem console) e o app vai para a bandeja.
+No Windows ele usa `pythonw.exe` (sem console); no Linux,
+`.venv/bin/python`/`python3`. O app vai para a bandeja.
 
 ## Primeira configuração
 
@@ -70,7 +97,8 @@ Na primeira vez, a janela de configuração abre. Preencha:
 1. **Telegram** → token do [@BotFather](https://t.me/BotFather) e seu ID
    (fale com o [@userinfobot](https://t.me/userinfobot) ou use `/id` no bot).
 2. **Pastas** → clique em **Escolher…** em cada categoria e aponte para as
-   pastas do Holyrics no Windows (ex.: `C:\Holyrics\files\...`).
+   pastas do Holyrics (Windows: `C:\Holyrics\files\...`;
+   Linux: `/opt/Holyrics/Holyrics/files/media/...`).
 3. Clique em **Salvar e aplicar**.
 
 A janela fecha para a bandeja e o bot começa a receber arquivos.
@@ -191,9 +219,11 @@ holyrics_bot_gui.py   # janela + bandeja (tkinter + pystray)
 app_core.py           # config.json, execução em thread, instância única
 bot.py                # motor do bot (Telegram, pastas, conversão, MinIO)
 minio_holyrics.py     # MinIO (S3)
-build-windows.ps1     # gera o .exe com tudo embutido
-HolyricsBot.spec      # configuração do PyInstaller
+build-windows.ps1     # gera o .exe (Windows) com tudo embutido
+build-linux.sh        # gera o binário + atalho .desktop (Linux)
+HolyricsBot.spec      # configuração do PyInstaller (Windows e Linux)
 executar-windows.bat  # abre pelo .venv (sem gerar .exe)
+executar-linux.sh     # abre pelo binário ou .venv (Linux)
 assets/               # ícones do app/bandeja
 minio-uploader/       # página de upload e script de publicação
 servidor-bot-api/     # opcional: servidor local do Bot API (sem limite de 20 MB)
@@ -203,7 +233,7 @@ servidor-bot-api/     # opcional: servidor local do Bot API (sem limite de 20 MB
 
 | Sintoma | O que fazer |
 |---|---|
-| App não abre | veja se o `HolyricsBot.exe` existe; rode `build-windows.ps1` de novo |
+| App não abre | veja se o executável/binário existe; rode o build de novo |
 | Ícone não aparece na bandeja | clique na seta “^” ao lado do relógio; o app pode estar atrás |
 | “Não autorizado” no Telegram | confira os IDs autorizados (use `/id`) |
 | Vídeo ainda não abre no Holyrics | veja o log; se o arquivo já era H.264/AAC+faststart, o problema pode ser o próprio arquivo |
@@ -212,5 +242,6 @@ servidor-bot-api/     # opcional: servidor local do Bot API (sem limite de 20 MB
 
 ---
 
-Feito para Windows 10/11. O executável gerado é autossuficiente — nada de
-instalar Python, ffmpeg ou dependências na máquina de quem usa.
+Feito para **Windows 10/11 e Linux**. O binário/executável gerado é
+autossuficiente — nada de instalar Python, ffmpeg ou dependências na máquina de
+quem usa.

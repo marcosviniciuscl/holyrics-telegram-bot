@@ -1,6 +1,11 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller: gera dist\\HolyricsBot\\HolyricsBot.exe com tudo embutido."""
+"""PyInstaller: gera o app com tudo embutido (Windows e Linux).
+
+Windows: dist\\HolyricsBot\\HolyricsBot.exe
+Linux:   dist/HolyricsBot/HolyricsBot
+"""
 import os
+import sys
 
 from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_submodules
 
@@ -24,7 +29,13 @@ try:
 except Exception:
     pass
 
-hiddenimports = ["pystray._win32", "pystray._base", "PIL._tkinter_finder"]
+if sys.platform.startswith("win"):
+    hiddenimports = ["pystray._win32", "pystray._base", "PIL._tkinter_finder"]
+    icone = "assets/icon.ico"
+else:
+    hiddenimports = ["pystray._xorg", "pystray._base", "PIL._tkinter_finder"]
+    icone = None
+
 try:
     hiddenimports += collect_submodules("yt_dlp")
 except Exception:
@@ -60,7 +71,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon="assets/icon.ico",
+    icon=icone,
 )
 coll = COLLECT(
     exe,
