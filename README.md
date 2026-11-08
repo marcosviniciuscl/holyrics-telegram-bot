@@ -70,6 +70,10 @@ Abas:
 
 Botões: **Salvar e aplicar**, **Iniciar/Parar bot**, **Abrir pasta** e **Sair**.
 
+O app **recarrega o `config.json` ao abrir a janela** (útil quando você edita o
+arquivo por fora). Na aba **Avançado** também há **Recarregar do arquivo** e
+**Abrir config.json**, além do caminho exato do arquivo em uso.
+
 ## Bandeja
 
 | Ação | O que faz |

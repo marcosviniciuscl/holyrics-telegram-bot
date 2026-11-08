@@ -14,6 +14,7 @@ import queue
 import re
 import shlex
 import shutil
+import subprocess
 import sys
 import threading
 from pathlib import Path
@@ -223,6 +224,7 @@ class Aplicativo:
         raiz.addHandler(handler)
 
         self.dados = app_core.carregar(self.caminho_config)
+        self._mtime_config = self._mtime_config_file()
         self.runner = app_core.BotRunner(self.caminho_config, self._status_cb)
 
         self.root = tk.Tk()
@@ -389,6 +391,9 @@ class Aplicativo:
     # ------------------------------------------------------------------ abas
     def _criar_vars(self):
         def sv(caminho, padrao=""):
+            if caminho == "telegram.usuarios":
+                ids = self._get("telegram.usuarios_autorizados", []) or []
+                return tk.StringVar(value=", ".join(str(i) for i in ids))
             return tk.StringVar(value=str(self._get(caminho, padrao)))
         def bv(caminho, padrao=False):
             return tk.BooleanVar(value=bool(self._get(caminho, padrao)))
@@ -535,6 +540,11 @@ class Aplicativo:
                 ["DEBUG", "INFO", "WARNING", "ERROR"])
         f.nota(f"Configuração: {self.caminho_config}\n"
                f"Log: {bot.DIR_APP / 'bot.log'}")
+        f.secao("Arquivo de configuração")
+        f.nota(str(self.caminho_config))
+        f.botao("Recarregar do arquivo",
+                lambda: self._recarregar_do_arquivo(force=True))
+        f.botao("Abrir config.json", self._abrir_config)
         f.secao("Atalho")
         f.nota("No Linux, cria o atalho no menu de aplicativos. "
                "No Windows, use o atalho do próprio executável.")
@@ -628,7 +638,29 @@ class Aplicativo:
             return False
         app_core.salvar(self.caminho_config, dados)
         self.dados = dados
+        self._mtime_config = self._mtime_config_file()
         return True
+
+    def _mtime_config_file(self) -> float:
+        try:
+            return self.caminho_config.stat().st_mtime
+        except OSError:
+            return 0.0
+
+    def _recarregar_do_arquivo(self, force: bool = False):
+        """Traz para a tela o que está no config.json (ex.: editado por fora)."""
+        mtime = self._mtime_config_file()
+        if not force and mtime <= self._mtime_config:
+            return
+        self.dados = app_core.carregar(self.caminho_config)
+        for caminho, var in self.v.items():
+            if caminho == "telegram.usuarios":
+                ids = self._get("telegram.usuarios_autorizados", []) or []
+                var.set(", ".join(str(i) for i in ids))
+            else:
+                var.set(self._get(caminho, ""))
+        self._mtime_config = mtime
+        self._log_ui(f"Configuração recarregada de {self.caminho_config}")
 
     def _salvar_ui(self):
         if not self._salvar_silencioso():
@@ -761,6 +793,8 @@ class Aplicativo:
 
     # ------------------------------------------------------------------ janela
     def _mostrar_janela_ui(self):
+        # Se o config.json mudou por fora, atualiza os campos antes de mostrar.
+        self._recarregar_do_arquivo(force=False)
         self.root.deiconify()
         self.root.lift()
         try:
@@ -788,6 +822,17 @@ class Aplicativo:
                 subprocess.Popen(["xdg-open", str(pasta)])
             except Exception:
                 messagebox.showinfo("Pasta", str(pasta))
+
+    def _abrir_config(self):
+        if not self.caminho_config.is_file():
+            self._salvar_silencioso()
+        try:
+            if os.name == "nt":
+                os.startfile(str(self.caminho_config))  # type: ignore[attr-defined]
+            else:
+                subprocess.Popen(["xdg-open", str(self.caminho_config)])
+        except Exception:  # noqa: BLE001
+            messagebox.showinfo("Configuração", str(self.caminho_config))
 
     def _escolher_pasta(self, chave: str):
         inicial = self.v[chave].get() or str(Path.home())
@@ -990,12 +1035,31 @@ def main() -> None:
         # Outra instância já está aberta: ela foi avisada para mostrar a janela.
         return
 
-    # Se o config.json ainda não existe, cria um modelo para o usuário editar.
+    # Se ainda não existe config do usuário, tenta importar um config.json que
+    # esteja ao lado do AppImage/executável; senão cria um modelo.
     if not caminho.is_file():
-        try:
-            app_core.salvar(caminho, app_core.carregar(caminho))
-        except Exception:  # noqa: BLE001
-            pass
+        candidatos: list[Path] = []
+        appimage = os.environ.get("APPIMAGE")
+        if appimage:
+            candidatos.append(Path(appimage).resolve().parent / "config.json")
+        if getattr(sys, "frozen", False):
+            candidatos.append(Path(sys.executable).resolve().parent / "config.json")
+        importado = False
+        for candidato in candidatos:
+            try:
+                if candidato.is_file() and candidato.resolve() != caminho.resolve():
+                    caminho.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(candidato, caminho)
+                    importado = True
+                    break
+            except Exception:  # noqa: BLE001
+                pass
+        if not importado:
+            try:
+                caminho.parent.mkdir(parents=True, exist_ok=True)
+                app_core.salvar(caminho, app_core.carregar(caminho))
+            except Exception:  # noqa: BLE001
+                pass
 
     app = Aplicativo(caminho, instancia)
     app.executar()
