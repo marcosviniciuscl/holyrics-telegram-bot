@@ -38,6 +38,7 @@ from urllib.parse import unquote, urlparse
 
 import httpx
 from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
+from .cache import CacheArquivos
 from .minio_store import MinioStore
 from telegram.constants import ChatAction, ParseMode
 from telegram.error import RetryAfter
@@ -51,6 +52,18 @@ from telegram.ext import (
 )
 
 LOG = logging.getLogger("holyrics-bot")
+
+# A janela define este gancho para espelhar no log a mesma mensagem do Telegram.
+FEEDBACK_HOOK = None
+
+
+def feedback(texto: str) -> None:
+    if FEEDBACK_HOOK is None:
+        return
+    try:
+        FEEDBACK_HOOK(texto)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _dir_recursos() -> Path:
@@ -183,6 +196,10 @@ class Config:
         self.converter_audio_kbps: int = int(cv.get("audio_bitrate_kbps", 192))
         self.converter_crf: int = int(cv.get("video_crf", 18))
         self.converter_preset: str = str(cv.get("video_preset", "medium"))
+
+        cache = bruto.get("cache") or {}
+        self.cache_reutilizar: bool = bool(cache.get("reutilizar", True))
+        self.cache_dias: int = int(cache.get("dias", 30))
 
         dl = bruto.get("download") or {}
         self.progresso_intervalo: float = float(dl.get("intervalo_progresso_segundos", 2))
@@ -376,6 +393,7 @@ class Progresso:
             return
         self.ultimo_t = time.monotonic()
         texto = self._texto(feito)
+        feedback(texto)
         try:
             await self.mensagem.edit_text(texto, parse_mode=ParseMode.HTML)
         except RetryAfter as e:
@@ -742,6 +760,7 @@ def texto_progresso_yt(estado: dict, titulo_html: str, rotulo: str) -> str:
 
 async def editar(mensagem, texto: str, **extra) -> None:
     """Edita a mensagem de status, ignorando erros de rede/rate limit."""
+    feedback(texto)
     try:
         await mensagem.edit_text(texto, parse_mode=ParseMode.HTML, **extra)
     except RetryAfter as e:
@@ -849,11 +868,13 @@ async def tratar_links(update: Update, context: ContextTypes.DEFAULT_TYPE, urls:
     cfg: Config = context.bot_data["cfg"]
     msg = update.effective_message
     if not cfg.yt_ativo:
+        feedback("🔗 O download do YouTube está desativado no config.json.")
         await msg.reply_text("🔗 O download do YouTube está desativado no config.json.")
         return
 
     pendentes: dict = context.bot_data.setdefault("yt_pendentes", {})
     for url in urls[:3]:
+        feedback("🔎 Verificando o vídeo…")
         aviso = await msg.reply_text("🔎 Verificando o vídeo…")
         try:
             info = await asyncio.to_thread(info_youtube, url, cfg)
@@ -966,35 +987,41 @@ def autorizado(update: Update, cfg: Config) -> bool:
     return False
 
 
-def extrair_arquivo(msg) -> tuple[str, str, int] | None:
-    """Retorna (file_id, nome, tamanho) do arquivo da mensagem, se houver."""
+def extrair_arquivo(msg) -> tuple[str, str, int, str] | None:
+    """Retorna (file_id, nome, tamanho, file_unique_id) do arquivo, se houver."""
     agora = time.strftime("%Y%m%d-%H%M%S")
 
     def ext_mime(mime: str | None, padrao: str) -> str:
         return MIME_EXT.get((mime or "").lower(), padrao)
 
+    def uid(obj) -> str:
+        # file_unique_id é estável para o mesmo arquivo; file_id é o fallback.
+        return getattr(obj, "file_unique_id", None) or getattr(obj, "file_id", "")
+
     if msg.document:
         nome = msg.document.file_name or f"documento-{agora}{ext_mime(msg.document.mime_type, '.bin')}"
-        return msg.document.file_id, nome, msg.document.file_size or 0
+        return msg.document.file_id, nome, msg.document.file_size or 0, uid(msg.document)
     if msg.audio:
         nome = msg.audio.file_name or f"audio-{agora}{ext_mime(msg.audio.mime_type, '.mp3')}"
-        return msg.audio.file_id, nome, msg.audio.file_size or 0
+        return msg.audio.file_id, nome, msg.audio.file_size or 0, uid(msg.audio)
     if msg.video:
         nome = msg.video.file_name or f"video-{agora}{ext_mime(msg.video.mime_type, '.mp4')}"
-        return msg.video.file_id, nome, msg.video.file_size or 0
+        return msg.video.file_id, nome, msg.video.file_size or 0, uid(msg.video)
     if msg.voice:
-        return msg.voice.file_id, f"voz-{agora}.ogg", msg.voice.file_size or 0
+        return msg.voice.file_id, f"voz-{agora}.ogg", msg.voice.file_size or 0, uid(msg.voice)
     if msg.video_note:
-        return msg.video_note.file_id, f"video-nota-{agora}.mp4", msg.video_note.file_size or 0
+        return (msg.video_note.file_id, f"video-nota-{agora}.mp4",
+                msg.video_note.file_size or 0, uid(msg.video_note))
     if msg.animation:
         nome = msg.animation.file_name or f"animacao-{agora}.mp4"
-        return msg.animation.file_id, nome, msg.animation.file_size or 0
+        return msg.animation.file_id, nome, msg.animation.file_size or 0, uid(msg.animation)
     if msg.photo:
         maior = msg.photo[-1]
-        return maior.file_id, f"foto-{agora}.jpg", maior.file_size or 0
+        return maior.file_id, f"foto-{agora}.jpg", maior.file_size or 0, uid(maior)
     if msg.sticker:
         suf = ".webp" if not msg.sticker.is_animated else ".tgs"
-        return msg.sticker.file_id, f"sticker-{agora}{suf}", msg.sticker.file_size or 0
+        return (msg.sticker.file_id, f"sticker-{agora}{suf}",
+                msg.sticker.file_size or 0, uid(msg.sticker))
     return None
 
 
@@ -1096,6 +1123,7 @@ async def baixar_do_minio(store, chave: str, destino: Path, mensagem,
             atual = texto(estado["feito"])
             if atual != ultimo:
                 ultimo = atual
+                feedback(atual)
                 try:
                     await mensagem.edit_text(atual, parse_mode=ParseMode.HTML)
                 except Exception as e:  # noqa: BLE001
@@ -1105,8 +1133,10 @@ async def baixar_do_minio(store, chave: str, destino: Path, mensagem,
             except asyncio.TimeoutError:
                 pass
         # uma última atualização com o total final
+        final = texto(estado["feito"])
+        feedback(final)
         try:
-            await mensagem.edit_text(texto(estado["feito"]), parse_mode=ParseMode.HTML)
+            await mensagem.edit_text(final, parse_mode=ParseMode.HTML)
         except Exception:  # noqa: BLE001
             pass
 
@@ -1226,24 +1256,26 @@ async def tratar_links_arquivo(update: Update, context: ContextTypes.DEFAULT_TYP
     msg = update.effective_message
     aceitos = [u for u in urls if not host_bloqueado(u, cfg)]
     if not aceitos:
+        feedback("🔒 Não baixo arquivos desse endereço.")
         await msg.reply_text("🔒 Não baixo arquivos desse endereço.")
         return
     for url in aceitos[:3]:
+        feedback("🔎 Baixando do link…")
         aviso = await msg.reply_text("🔎 Baixando do link…")
         try:
             destino = await baixar_link(url, cfg, aviso)
         except Exception as e:  # noqa: BLE001
             LOG.warning("Falha ao baixar o link %s: %s", url, e)
-            await aviso.edit_text(
+            await editar(
+                aviso,
                 f"❌ Não consegui baixar esse link:\n{html.escape(str(e))}",
-                parse_mode=ParseMode.HTML,
             )
             continue
-        await aviso.edit_text(
+        await editar(
+            aviso,
             f"✅ <b>{html.escape(destino.name)}</b>\n"
             f"📁 Salvo em:\n<code>{html.escape(str(destino))}</code>\n"
             f"📦 {fmt_bytes(destino.stat().st_size)}",
-            parse_mode=ParseMode.HTML,
         )
 
 
@@ -1717,12 +1749,13 @@ async def oferecer_upload(update: Update, context: ContextTypes.DEFAULT_TYPE,
     cfg: Config = context.bot_data["cfg"]
     store = context.bot_data.get("minio")
     if store is None or not cfg.minio_configurado():
-        await msg.reply_text(
+        texto = (
             f"❌ <b>{html.escape(nome)}</b> tem {fmt_bytes(tamanho)} e passa do limite de "
             f"{cfg.max_mb} MB que o Telegram entrega para bots.\n"
-            "Para receber arquivos maiores, ative o MinIO no config.json.",
-            parse_mode=ParseMode.HTML,
+            "Para receber arquivos maiores, ative o MinIO no config.json."
         )
+        feedback(texto)
+        await msg.reply_text(texto, parse_mode=ParseMode.HTML)
         return
 
     token = secrets.token_hex(6)
@@ -1751,13 +1784,15 @@ async def oferecer_upload(update: Update, context: ContextTypes.DEFAULT_TYPE,
             "🔗 <b>Envie o arquivo</b> (num computador) com:\n"
             f"<code>curl -T \"caminho/do/arquivo\" \"{html.escape(link)}\"</code>"
         )
-    await msg.reply_text(
+    texto = (
         f"📦 <b>{html.escape(nome)}</b> tem {fmt_bytes(tamanho)} — acima do limite de "
         f"{cfg.max_mb} MB do Telegram.\n\n{instrucao}\n\n"
         f"Assim que o envio terminar, eu salvo na pasta certa automaticamente "
-        f"(aguardo até {cfg.minio_espera_min} min).",
-        parse_mode=ParseMode.HTML,
-        disable_web_page_preview=True,
+        f"(aguardo até {cfg.minio_espera_min} min)."
+    )
+    feedback(texto)
+    await msg.reply_text(
+        texto, parse_mode=ParseMode.HTML, disable_web_page_preview=True
     )
     asyncio.create_task(esperar_upload(context.application, token, msg.chat_id))
 
@@ -1796,10 +1831,10 @@ async def esperar_upload(app: Application, token: str, chat_id: int) -> None:
         return
 
     nome = pendente["nome"]
+    texto_estado = f"⬇️ Recebendo <b>{html.escape(nome)}</b> do servidor… 0%"
+    feedback(texto_estado)
     estado = await app.bot.send_message(
-        chat_id,
-        f"⬇️ Recebendo <b>{html.escape(nome)}</b> do servidor… 0%",
-        parse_mode=ParseMode.HTML,
+        chat_id, texto_estado, parse_mode=ParseMode.HTML
     )
     temporario = Path(tempfile.mkdtemp(prefix="hl-minio-"))
     try:
@@ -1809,19 +1844,19 @@ async def esperar_upload(app: Application, token: str, chat_id: int) -> None:
         await asyncio.to_thread(store.apagar, pendente["chave"])
         baixado, nome, aviso = await normalizar_com_fallback(estado, baixado, nome, cfg)
         destino = await salvar_para_pasta_com_progresso(estado, baixado, nome, cfg)
-        await estado.edit_text(
+        await editar(
+            estado,
             f"✅ <b>{html.escape(nome)}</b>\n"
             f"📁 Salvo em:\n<code>{html.escape(str(destino))}</code>\n"
             f"📦 {fmt_bytes(destino.stat().st_size)}"
             + (f"\n{aviso}" if aviso else ""),
-            parse_mode=ParseMode.HTML,
         )
     except Exception as e:  # noqa: BLE001
         LOG.exception("Falha ao salvar o arquivo vindo do MinIO")
-        await estado.edit_text(
+        await editar(
+            estado,
             f"❌ Recebi <b>{html.escape(nome)}</b>, mas falhei ao salvar: "
             f"{html.escape(str(e))}",
-            parse_mode=ParseMode.HTML,
         )
     finally:
         shutil.rmtree(temporario, ignore_errors=True)
@@ -1867,10 +1902,10 @@ async def esperar_prefixo(app: Application, token: str, chat_id: int) -> None:
         tamanho = await asyncio.to_thread(store.tamanho, chave)
     except Exception:  # noqa: BLE001
         tamanho = 0
+    texto_estado = f"⬇️ Recebendo <b>{html.escape(nome)}</b> do servidor… 0%"
+    feedback(texto_estado)
     estado = await app.bot.send_message(
-        chat_id,
-        f"⬇️ Recebendo <b>{html.escape(nome)}</b> do servidor… 0%",
-        parse_mode=ParseMode.HTML,
+        chat_id, texto_estado, parse_mode=ParseMode.HTML
     )
     temporario = Path(tempfile.mkdtemp(prefix="hl-minio-"))
     try:
@@ -1882,19 +1917,19 @@ async def esperar_prefixo(app: Application, token: str, chat_id: int) -> None:
         destino = await salvar_para_pasta_com_progresso(
             estado, baixado, nome_seguro(nome), cfg, pendente.get("categoria")
         )
-        await estado.edit_text(
+        await editar(
+            estado,
             f"✅ <b>{html.escape(nome)}</b>\n"
             f"📁 Salvo em:\n<code>{html.escape(str(destino))}</code>\n"
             f"📦 {fmt_bytes(destino.stat().st_size)}"
             + (f"\n{aviso}" if aviso else ""),
-            parse_mode=ParseMode.HTML,
         )
     except Exception as e:  # noqa: BLE001
         LOG.exception("Falha ao salvar o arquivo do /enviar")
-        await estado.edit_text(
+        await editar(
+            estado,
             f"❌ Recebi <b>{html.escape(nome)}</b>, mas falhei ao salvar: "
             f"{html.escape(str(e))}",
-            parse_mode=ParseMode.HTML,
         )
     finally:
         shutil.rmtree(temporario, ignore_errors=True)
@@ -1948,15 +1983,120 @@ async def cmd_enviar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         "link_json": link_json,
     }
     destino = f"<b>{categoria}</b>" if categoria else "da categoria do arquivo"
-    await msg.reply_text(
+    texto = (
         "📤 <b>Envie o arquivo grande por este link</b> — não precisa mandar no Telegram:\n"
         f"{html.escape(link)}\n\n"
         f"Assim que o envio terminar, eu salvo na pasta {destino} "
-        f"(aguardo até {cfg.minio_espera_min} min).",
-        parse_mode=ParseMode.HTML,
-        disable_web_page_preview=True,
+        f"(aguardo até {cfg.minio_espera_min} min)."
+    )
+    feedback(texto)
+    await msg.reply_text(
+        texto, parse_mode=ParseMode.HTML, disable_web_page_preview=True
     )
     asyncio.create_task(esperar_prefixo(context.application, token, msg.chat_id))
+
+
+async def reutilizar_arquivo(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                             msg, entrada: dict, nome: str, tamanho: int,
+                             unique_id: str) -> None:
+    """Usa um arquivo já salvo: se for final, avisa; se for original, converte."""
+    cfg: Config = context.bot_data["cfg"]
+    cache = context.bot_data.get("cache")
+    origem = Path(entrada.get("caminho") or "")
+
+    if not origem.is_file():
+        await msg.reply_text(
+            "⌛ O arquivo salvo não existe mais; mande o arquivo de novo.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    if entrada.get("tipo") == "final":
+        texto = (
+            f"✅ <b>{html.escape(Path(origem).name)}</b> já estava salvo:\n"
+            f"<code>{html.escape(str(origem))}</code>"
+        )
+        feedback(texto)
+        await msg.reply_text(texto, parse_mode=ParseMode.HTML)
+        return
+
+    texto = f"♻️ Reaproveitando <b>{html.escape(nome)}</b> já salvo para converter…"
+    feedback(texto)
+    estado = await msg.reply_text(texto, parse_mode=ParseMode.HTML)
+    try:
+        if eh_pdf(nome) and cfg.pdf_converter:
+            pasta = cfg.pastas.get("apresentacao") or cfg.pastas.get("outros")
+            if pasta is None:
+                raise RuntimeError("nenhuma pasta de apresentação configurada")
+            destino = nome_livre(pasta / (Path(nome).stem + ".pptx"))
+            destino.parent.mkdir(parents=True, exist_ok=True)
+            paginas = await converter_pdf_com_progresso(
+                estado, origem, destino, cfg, nome
+            )
+            if not cfg.pdf_manter_original:
+                try:
+                    origem.unlink()
+                except OSError:
+                    pass
+            if cache is not None:
+                cache.registrar(unique_id, destino, nome, tamanho, "final")
+            await editar(
+                estado,
+                f"✅ <b>{html.escape(nome)}</b>\n"
+                f"🔄 Convertido para PowerPoint ({paginas} "
+                f"{'slide' if paginas == 1 else 'slides'})\n"
+                f"📁 Salvo em:\n<code>{html.escape(str(destino))}</code>\n"
+                f"📦 {fmt_bytes(destino.stat().st_size)}",
+            )
+            return
+
+        temporario = Path(tempfile.mkdtemp(prefix="hl-cache-"))
+        try:
+            copia = temporario / nome_seguro(nome)
+            shutil.copy2(origem, copia)
+            copia2, novo_nome, aviso = await normalizar_com_fallback(
+                estado, copia, nome, cfg
+            )
+            if (aviso or "").startswith("⚠️"):
+                await editar(estado, f"❌ <b>{html.escape(nome)}</b>\n{aviso}")
+                return
+            destino = await asyncio.to_thread(
+                salvar_para_pasta, copia2, novo_nome, cfg
+            )
+            # Remove o original cacheado para não deixar duplicado. Se a
+            # conversão gerou "nome (2).mp4", ele volta a ser "nome.mp4".
+            if origem.exists() and destino.resolve() != origem.resolve():
+                if (destino.parent == origem.parent
+                        and Path(destino).stem.startswith(origem.stem + " (")):
+                    try:
+                        origem.unlink()
+                        os.replace(destino, origem)
+                        destino = origem
+                    except OSError:
+                        pass
+                else:
+                    try:
+                        origem.unlink()
+                    except OSError:
+                        pass
+            if cache is not None:
+                cache.registrar(unique_id, destino, nome, tamanho, "final")
+            await editar(
+                estado,
+                f"✅ <b>{html.escape(novo_nome)}</b>\n"
+                f"📁 Salvo em:\n<code>{html.escape(str(destino))}</code>\n"
+                f"📦 {fmt_bytes(destino.stat().st_size)}"
+                + (f"\n{aviso}" if aviso else ""),
+            )
+        finally:
+            shutil.rmtree(temporario, ignore_errors=True)
+    except Exception as e:  # noqa: BLE001
+        LOG.exception("Falha ao reaproveitar %s", origem)
+        await editar(
+            estado,
+            f"❌ Falha ao reaproveitar <b>{html.escape(nome)}</b>:\n"
+            f"{html.escape(str(e))}",
+        )
 
 
 async def receber(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1992,19 +2132,28 @@ async def receber(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             )
         return
 
-    file_id, nome_bruto, tamanho = dados
+    file_id, nome_bruto, tamanho, unique_id = dados
     nome = nome_seguro(nome_bruto)
     titulo_html = f"<b>{html.escape(nome)}</b>"
     LOG.info("Recebido: %s (%s) de %s", nome, fmt_bytes(tamanho), update.effective_user.id)
+
+    cache = context.bot_data.get("cache")
+    if cfg.cache_reutilizar and cache is not None and unique_id:
+        entrada = cache.buscar(unique_id)
+        if entrada:
+            await reutilizar_arquivo(
+                update, context, msg, entrada, nome, tamanho, unique_id
+            )
+            return
 
     if cfg.max_mb and tamanho and tamanho > cfg.max_mb * 1024 * 1024:
         await oferecer_upload(update, context, msg, nome, tamanho)
         return
 
     # 1) mensagem única de status (será editada até o resultado final)
-    estado = await msg.reply_text(
-        template_estado(titulo_html, tamanho), parse_mode=ParseMode.HTML
-    )
+    texto_estado = template_estado(titulo_html, tamanho)
+    feedback(texto_estado)
+    estado = await msg.reply_text(texto_estado, parse_mode=ParseMode.HTML)
     try:
         await context.bot.send_chat_action(msg.chat_id, ChatAction.TYPING)
     except Exception:
@@ -2073,15 +2222,19 @@ async def receber(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 destino = nome_livre(pasta / nome)
                 destino.parent.mkdir(parents=True, exist_ok=True)
                 shutil.move(str(baixado_path), str(destino))
-                await estado.edit_text(
+                if cache is not None and cfg.cache_reutilizar:
+                    cache.registrar(unique_id, destino, nome, tamanho, "original")
+                await editar(
+                    estado,
                     f"⚠️ <b>{html.escape(nome)}</b> baixado, mas a conversão para PowerPoint "
                     f"falhou ({html.escape(str(e))}).\nSalvei o PDF original em:\n"
                     f"<code>{html.escape(str(destino))}</code>",
-                    parse_mode=ParseMode.HTML,
                 )
                 return
             if cfg.pdf_manter_original:
                 shutil.move(str(baixado_path), str(nome_livre(pasta / nome)))
+            if cache is not None and cfg.cache_reutilizar:
+                cache.registrar(unique_id, destino, nome, tamanho, "final")
             texto = (
                 f"✅ <b>{html.escape(nome)}</b>\n"
                 f"🔄 Convertido para PowerPoint ({paginas} "
@@ -2096,6 +2249,9 @@ async def receber(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             destino = nome_livre(pasta / nome)
             destino.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(baixado_path), str(destino))
+            if cache is not None and cfg.cache_reutilizar:
+                tipo = "original" if (aviso_conversao or "").startswith("⚠️") else "final"
+                cache.registrar(unique_id, destino, nome, tamanho, tipo)
             texto = (
                 f"✅ <b>{html.escape(nome)}</b>\n"
                 f"📁 Salvo em:\n<code>{html.escape(str(destino))}</code>\n"
@@ -2104,14 +2260,14 @@ async def receber(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             )
 
         LOG.info("Salvo: %s", destino)
-        await estado.edit_text(texto, parse_mode=ParseMode.HTML)
+        await editar(estado, texto)
 
     except Exception as e:
         LOG.exception("Erro ao processar %s", nome)
         try:
-            await estado.edit_text(
+            await editar(
+                estado,
                 f"❌ Falha ao receber <b>{html.escape(nome)}</b>:\n{html.escape(str(e))}",
-                parse_mode=ParseMode.HTML,
             )
         except Exception:
             pass
@@ -2260,6 +2416,9 @@ def preparar_aplicacao(cfg: Config) -> Application:
     app.bot_data["cfg"] = cfg
     app.bot_data["minio"] = store
     app.bot_data["upload_pendentes"] = {}
+    app.bot_data["cache"] = CacheArquivos(
+        DIR_APP / "cache_arquivos.json", cfg.cache_dias
+    )
     app.post_init = publicar_comandos
 
     app.add_handler(CommandHandler("start", lambda u, c: cmd_start(u, cfg)))

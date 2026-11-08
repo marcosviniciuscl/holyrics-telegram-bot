@@ -65,8 +65,8 @@ Abas:
 - **YouTube** — ativar, resolução/duração máximas, bitrate do MP3 e cookies.
 - **MinIO** — endpoint, chaves, buckets, link de upload e tempos. O botão
   **Publicar no MinIO** sobe a página de upload e configura o bucket público.
-- **Avançado** — links diretos, limite do Telegram, nível do log e criação do
-  atalho no Linux.
+- **Avançado** — links diretos, limite do Telegram, cache de arquivos, nível do
+  log e criação do atalho no Linux.
 - **Log** — o que o bot está fazendo, em tempo real.
 
 Botões: **Salvar e aplicar**, **Iniciar/Parar bot**, **Abrir pasta** e **Sair**.
@@ -151,6 +151,7 @@ holyrics_bot/            # pacote do aplicativo
   gui.py                 # janela + bandeja (tkinter + pystray)
   app_core.py            # config.json, execução em thread, instância única
   minio_store.py         # MinIO (S3)
+  cache.py               # reaproveitamento de arquivos já enviados
   resources/             # ícones + página de upload
 main.py                  # ponto de entrada (usado pelo PyInstaller)
 HolyricsBot.spec         # configuração do PyInstaller
@@ -161,6 +162,26 @@ packaging/appimage/      # AppRun + .desktop do AppImage
 .github/workflows/       # build automático dos pacotes
 bin/                     # ffmpeg/ffprobe (o CI coloca aqui; não versionado)
 ```
+
+## Cache de arquivos (evitar baixar de novo)
+
+Ativado por padrão. O bot guarda o `file_unique_id` do Telegram apontando para o
+arquivo salvo. Se você reenviar o mesmo arquivo:
+
+- se ele já está no formato final, o bot responde **“já estava salvo”** e não
+  baixa de novo;
+- se o que está salvo é o **original** de uma conversão que falhou, o bot usa
+  esse original para converter outra vez, **sem baixar**;
+- se o arquivo não existe mais (ou passou do prazo do cache), baixa normal.
+
+```json
+"cache": {
+  "reutilizar": true,
+  "dias": 30
+}
+```
+
+O cache fica em `cache_arquivos.json` junto do `config.json`.
 
 ## Onde ficam os arquivos
 

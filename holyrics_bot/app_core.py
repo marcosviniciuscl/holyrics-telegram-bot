@@ -70,6 +70,10 @@ DEFAULTS: dict = {
         "ffmpeg": "",
         "cookies": "",
     },
+    "cache": {
+        "reutilizar": True,
+        "dias": 30,
+    },
     "download": {
         "intervalo_progresso_segundos": 2,
         "tamanho_maximo_mb": 20,

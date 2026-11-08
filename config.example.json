@@ -35,6 +35,11 @@
     "video_preset": "medium"
   },
 
+  "cache": {
+    "reutilizar": true,
+    "dias": 30
+  },
+
   "youtube": {
     "ativo": true,
     "altura_maxima": 1080,

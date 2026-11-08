@@ -8,6 +8,7 @@ Menu do botão direito: abrir, iniciar/parar e sair.
 from __future__ import annotations
 
 import copy
+import html
 import logging
 import os
 import queue
@@ -119,6 +120,7 @@ OPCOES = {
         "us-east-1", "us-east-2", "us-west-1", "us-west-2",
         "eu-west-1", "eu-central-1", "ap-southeast-1", "sa-east-1",
     ],
+    "cache.dias": ["7 dias", "30 dias", "90 dias", "365 dias"],
     "log.nivel": ["DEBUG", "INFO", "WARNING", "ERROR"],
 }
 
@@ -289,6 +291,7 @@ class Aplicativo:
         self._criar_abas()
         self._criar_rodape()
         self._log_ui(f"Configuração carregada de {self.caminho_config}")
+        bot.FEEDBACK_HOOK = self._feedback_log
 
         self.root.after(120, self._poll_ui)
         self.root.after(150, self._poll_log)
@@ -464,13 +467,14 @@ class Aplicativo:
             "minio.endpoint", "minio.access_key", "minio.secret_key",
             "minio.bucket", "minio.regiao", "minio.url_pagina_upload",
             "minio.bucket_publico", "minio.prefixo", "minio.expira_min",
-            "minio.espera_max_min", "minio.tamanho_maximo_mb", "log.nivel",
+            "minio.espera_max_min", "minio.tamanho_maximo_mb", "cache.dias",
+            "log.nivel",
         ):
             self.v[caminho] = sv(caminho)
         for caminho in (
             "telegram.aceitar_grupos", "youtube.ativo", "converter.perguntar",
             "pdf.converter_para_pptx", "pdf.manter_pdf_original",
-            "links.ativo", "minio.ativo", "minio.secure",
+            "links.ativo", "minio.ativo", "minio.secure", "cache.reutilizar",
         ):
             self.v[caminho] = bv(caminho)
 
@@ -600,6 +604,11 @@ class Aplicativo:
         f.combo("Tamanho máximo recebido", self.v["download.tamanho_maximo_mb"],
                 OPCOES["download.tamanho_maximo_mb"],
                 dica="Na API na nuvem o máximo é 20 MB. Com MinIO, o excedente vira link.")
+        f.secao("Cache de arquivos")
+        f.check("Reutilizar arquivos já enviados (evita baixar de novo)",
+                self.v["cache.reutilizar"])
+        f.combo("Guardar cache por", self.v["cache.dias"], OPCOES["cache.dias"],
+                dica="Se o arquivo já está salvo, o bot usa ele em vez de baixar de novo.")
         f.secao("Registro")
         f.combo("Nível do log", self.v["log.nivel"], OPCOES["log.nivel"])
         f.nota(f"Configuração: {self.caminho_config}\n"
@@ -679,6 +688,8 @@ class Aplicativo:
 
         definir("download.tamanho_maximo_mb",
                 inteiro("download.tamanho_maximo_mb", 20))
+        definir("cache.reutilizar", self.v["cache.reutilizar"].get())
+        definir("cache.dias", inteiro("cache.dias", 30))
         definir("links.ativo", self.v["links.ativo"].get())
         definir("links.tamanho_maximo_mb", inteiro("links.tamanho_maximo_mb", 0))
 
@@ -927,6 +938,12 @@ class Aplicativo:
         except tk.TclError:
             pass
 
+    def _feedback_log(self, texto: str) -> None:
+        """Espelha no log a mesma mensagem que foi para o Telegram."""
+        limpo = re.sub(r"<[^>]+>", "", html.unescape(texto or "")).strip()
+        if limpo:
+            self._post(lambda: self._log_ui(f"📨 {limpo}"))
+
     def _publicar_pagina(self):
         dados = self._coletar()
         minio = dados["minio"]
@@ -1028,6 +1045,7 @@ class Aplicativo:
             messagebox.showerror("Atalho", f"Falha ao criar o atalho:\n{e}")
 
     def _sair_ui(self):
+        bot.FEEDBACK_HOOK = None
         try:
             self._aplicar_status("parado", "Saindo…")
         except Exception:  # noqa: BLE001
