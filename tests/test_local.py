@@ -70,8 +70,12 @@ def teste_conversao(tmp: Path) -> bool:
 
     import time
 
+    progresso_pdf: list[tuple[int, int]] = []
     t0 = time.time()
-    paginas = bot.pdf_para_pptx(pdf, pptx, cfg)
+    paginas = bot.pdf_para_pptx(
+        pdf, pptx, cfg,
+        ao_progredir=lambda feito, total: progresso_pdf.append((feito, total)),
+    )
     dur = time.time() - t0
 
     from pptx import Presentation
@@ -89,12 +93,16 @@ def teste_conversao(tmp: Path) -> bool:
         f"{Emu(prs.slide_height).inches:.3f} polegadas (16:9 = 13.333 x 7.500)"
     )
     print(f"Tamanho do .pptx: {bot.fmt_bytes(pptx.stat().st_size)}")
+    print(f"Progresso do PDF: {progresso_pdf}")
 
     ok = (
         paginas == 5
         and len(slides) == 5
         and all(f == 1 for f in fotos)
         and abs(Emu(prs.slide_width).inches - 13.333) < 0.01
+        and progresso_pdf[:1] == [(0, 5)]
+        and progresso_pdf[-1:] == [(5, 5)]
+        and len(progresso_pdf) == 6
     )
     print("RESULTADO:", "OK ✅" if ok else "FALHOU ❌")
     return ok

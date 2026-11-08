@@ -406,8 +406,12 @@ async def baixar(url: str, destino: Path, progresso: Progresso) -> int:
 # PDF -> PowerPoint
 # ---------------------------------------------------------------------------
 
-def pdf_para_pptx(origem: Path, saida: Path, cfg: Config) -> int:
-    """Converte cada página do PDF em um slide (formato 16:9) do PowerPoint."""
+def pdf_para_pptx(origem: Path, saida: Path, cfg: Config,
+                  ao_progredir=None) -> int:
+    """Converte cada página do PDF em um slide (formato 16:9) do PowerPoint.
+
+    `ao_progredir(feito, total)` é chamado a cada página (roda na thread).
+    """
     import pypdfium2 as pdfium
     from PIL import Image
     from pptx import Presentation
@@ -419,6 +423,8 @@ def pdf_para_pptx(origem: Path, saida: Path, cfg: Config) -> int:
         total = len(doc)
         if total == 0:
             raise ValueError("PDF sem páginas")
+        if ao_progredir:
+            ao_progredir(0, total)
 
         prs = Presentation()
         prs.slide_width = Inches(LARG_IN)
@@ -463,6 +469,8 @@ def pdf_para_pptx(origem: Path, saida: Path, cfg: Config) -> int:
                     width=Inches(larg),
                     height=Inches(alt),
                 )
+                if ao_progredir:
+                    ao_progredir(i + 1, total)
         prs.save(str(saida))
         return total
     finally:
@@ -740,6 +748,58 @@ async def editar(mensagem, texto: str, **extra) -> None:
         await asyncio.sleep(float(e.retry_after))
     except Exception as e:
         LOG.debug("Falha ao editar a mensagem: %s", e)
+
+
+async def converter_pdf_com_progresso(mensagem, origem: Path, saida: Path,
+                                      cfg: Config, nome: str = "") -> int:
+    """Converte PDF -> PPTX mostrando 'página X de N' na mensagem."""
+    estado = {"feito": 0, "total": 0}
+    parar = asyncio.Event()
+    sucesso = False
+    alvo = f"<b>{html.escape(nome)}</b>" if nome else "o PDF"
+
+    def ao_progredir(feito: int, total: int) -> None:
+        estado["feito"] = feito
+        estado["total"] = total
+
+    def texto() -> str:
+        total = estado["total"] or 0
+        feito = estado["feito"] or 0
+        if total:
+            pct = min(99, int(feito * 100 / total))
+            return (f"🔄 Convertendo {alvo} para PowerPoint…\n"
+                    f"{pct}% — página {feito} de {total}")
+        return f"🔄 Convertendo {alvo} para PowerPoint…"
+
+    async def vigia():
+        ultimo = None
+        while not parar.is_set():
+            atual = texto()
+            if atual != ultimo:
+                ultimo = atual
+                await editar(mensagem, atual)
+            try:
+                await asyncio.wait_for(parar.wait(), 0.8)
+            except asyncio.TimeoutError:
+                pass
+        total = estado["total"] or 0
+        if sucesso and total:
+            await editar(
+                mensagem,
+                f"🔄 Convertendo {alvo} para PowerPoint…\n"
+                f"100% — página {total} de {total}",
+            )
+
+    tarefa = asyncio.create_task(vigia())
+    try:
+        resultado = await asyncio.to_thread(
+            pdf_para_pptx, origem, saida, cfg, ao_progredir
+        )
+        sucesso = True
+        return resultado
+    finally:
+        parar.set()
+        await tarefa
 
 
 async def rodar_com_progresso(mensagem, estado: dict, titulo_html: str, rotulo: str,
@@ -1134,12 +1194,8 @@ async def baixar_link(url: str, cfg: Config, mensagem) -> Path:
                 raise RuntimeError("nenhuma pasta de apresentação configurada")
             destino = nome_livre(pasta / (Path(nome).stem + ".pptx"))
             destino.parent.mkdir(parents=True, exist_ok=True)
-            await mensagem.edit_text(
-                f"🔄 Convertendo <b>{html.escape(nome)}</b> para PowerPoint…",
-                parse_mode=ParseMode.HTML,
-            )
             try:
-                await asyncio.to_thread(pdf_para_pptx, parcial, destino, cfg)
+                await converter_pdf_com_progresso(mensagem, parcial, destino, cfg, nome)
             except Exception as e:  # noqa: BLE001 — salva o PDF original
                 LOG.exception("Falha ao converter PDF do link %s", url)
                 destino = nome_livre(pasta / nome)
@@ -1243,6 +1299,25 @@ def salvar_para_pasta(origem: Path, nome: str, cfg: Config,
     destino.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(str(origem), str(destino))
     return destino
+
+
+async def salvar_para_pasta_com_progresso(mensagem, origem: Path, nome: str,
+                                          cfg: Config,
+                                          categoria_forcada: str | None = None) -> Path:
+    """Como `salvar_para_pasta`, mas mostra o progresso da conversão de PDF."""
+    if eh_pdf(nome) and cfg.pdf_converter:
+        pasta = cfg.pastas.get("apresentacao") or cfg.pastas.get("outros")
+        if pasta is None:
+            raise RuntimeError("nenhuma pasta de apresentação configurada")
+        destino = nome_livre(pasta / (Path(nome).stem + ".pptx"))
+        destino.parent.mkdir(parents=True, exist_ok=True)
+        await converter_pdf_com_progresso(mensagem, origem, destino, cfg, nome)
+        if cfg.pdf_manter_original:
+            shutil.move(str(origem), str(nome_livre(pasta / nome)))
+        return destino
+    return await asyncio.to_thread(
+        salvar_para_pasta, origem, nome, cfg, categoria_forcada
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1720,7 +1795,7 @@ async def esperar_upload(app: Application, token: str, chat_id: int) -> None:
                               html.escape(nome), tamanho, cfg.progresso_intervalo)
         await asyncio.to_thread(store.apagar, pendente["chave"])
         baixado, nome, aviso = await normalizar_com_fallback(estado, baixado, nome, cfg)
-        destino = await asyncio.to_thread(salvar_para_pasta, baixado, nome, cfg)
+        destino = await salvar_para_pasta_com_progresso(estado, baixado, nome, cfg)
         await estado.edit_text(
             f"✅ <b>{html.escape(nome)}</b>\n"
             f"📁 Salvo em:\n<code>{html.escape(str(destino))}</code>\n"
@@ -1791,8 +1866,8 @@ async def esperar_prefixo(app: Application, token: str, chat_id: int) -> None:
                               html.escape(nome), tamanho, cfg.progresso_intervalo)
         await asyncio.to_thread(store.apagar, chave)
         baixado, nome, aviso = await normalizar_com_fallback(estado, baixado, nome, cfg)
-        destino = await asyncio.to_thread(
-            salvar_para_pasta, baixado, nome_seguro(nome), cfg, pendente.get("categoria")
+        destino = await salvar_para_pasta_com_progresso(
+            estado, baixado, nome_seguro(nome), cfg, pendente.get("categoria")
         )
         await estado.edit_text(
             f"✅ <b>{html.escape(nome)}</b>\n"
@@ -1975,14 +2050,11 @@ async def receber(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             if pasta is None:
                 raise RuntimeError("nenhuma pasta de apresentação configurada")
             destino = nome_livre(pasta / (Path(nome).stem + ".pptx"))
-            await estado.edit_text(
-                f"🔄 <b>{html.escape(nome)}</b> baixado ({fmt_bytes(total)})\n"
-                "Convertendo para PowerPoint…",
-                parse_mode=ParseMode.HTML,
-            )
             try:
                 destino.parent.mkdir(parents=True, exist_ok=True)
-                paginas = await asyncio.to_thread(pdf_para_pptx, baixado_path, destino, cfg)
+                paginas = await converter_pdf_com_progresso(
+                    estado, baixado_path, destino, cfg, nome
+                )
             except Exception as e:
                 LOG.exception("Falha ao converter PDF %s", nome)
                 destino = nome_livre(pasta / nome)

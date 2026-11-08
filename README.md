@@ -44,7 +44,8 @@ atual é **0.0.1**.
     com transparência preservada em PNG);
   - a conversão só acontece quando o arquivo **não está no padrão** — o bot
     analisa o codec com `ffprobe`, não só a extensão.
-- **PDF → PowerPoint** (.pptx) automaticamente.
+- **PDF → PowerPoint** (.pptx) automaticamente, com **progresso por página**
+  (`Convertendo… 60% — página 12 de 20`).
 - **YouTube**: link → 2 opções de vídeo (MP4) e 2 de áudio (MP3), com progresso.
 - **Arquivos grandes**: acima de 20 MB (limite da API na nuvem), usa o
   **MinIO** e devolve um link curto temporário.
@@ -102,6 +103,9 @@ Se já está nesse padrão, **nada é feito**. Se só o contêiner/áudio está 
 faz **remux/cópia** (rápido, sem perda). Se o codec é incompatível (HEVC, VP9,
 MPEG-4, 10 bits…), **reencoda** com `libx264` e CRF configurável (padrão **18**),
 sem redimensionar.
+
+Na conversão de **PDF**, a mensagem do Telegram mostra o andamento:
+`🔄 Convertendo arquivo.pdf para PowerPoint… 60% — página 12 de 20`.
 
 ```json
 "converter": {
